@@ -9,6 +9,8 @@ const { cookieToJson } = require('./util/index')
 const fileUpload = require('express-fileupload')
 const decode = require('safe-decode-uri-component')
 
+import * as QM from './queue'
+
 /**
  * The version check result.
  * @readonly
@@ -54,6 +56,7 @@ const VERSION_CHECK_RESULT = {
 /**
  * Get the module definitions dynamically.
  *
+ * @param {Express} app
  * @param {string} modulesPath The path to modules (JS).
  * @param {Record<string, string>} [specificRoute] The specific route of specific modules.
  * @param {boolean} [doRequire] If true, require() the module directly.
@@ -63,6 +66,7 @@ const VERSION_CHECK_RESULT = {
  * @example getModuleDefinitions("./module", {"album_new.js": "/album/create"})
  */
 async function getModulesDefinitions(
+  app,
   modulesPath,
   specificRoute,
   doRequire = true,
@@ -82,7 +86,7 @@ async function getModulesDefinitions(
       const modulePath = path.join(modulesPath, file)
       const module = doRequire ? require(modulePath) : modulePath
 
-      return { identifier, route, module }
+      return { identifier, route, module, app }
     })
 
   return modules
@@ -199,7 +203,7 @@ async function consturctServer(moduleDefs) {
    */
   const moduleDefinitions =
     moduleDefs ||
-    (await getModulesDefinitions(path.join(__dirname, 'module'), special))
+    (await getModulesDefinitions(app, path.join(__dirname, 'module'), special))
 
   for (const moduleDef of moduleDefinitions) {
     // Register the route.
@@ -219,7 +223,7 @@ async function consturctServer(moduleDefs) {
       )
 
       try {
-        const moduleResponse = await moduleDef.module(query, (...params) => {
+        const reqWrapper = (...params) => {
           // 参数注入客户端IP
           const obj = [...params]
           let ip = req.ip
@@ -233,7 +237,12 @@ async function consturctServer(moduleDefs) {
             ip,
           }
           return request(...obj)
-        })
+        }
+        const moduleResponse = await moduleDef.module(
+          query,
+          reqWrapper,
+          moduleDef.app,
+        )
         console.log('[OK]', decode(req.originalUrl))
 
         const cookies = moduleResponse.cookie
@@ -252,6 +261,7 @@ async function consturctServer(moduleDefs) {
         }
         res.status(moduleResponse.status).send(moduleResponse.body)
       } catch (/** @type {*} */ moduleResponse) {
+        console.log(moduleResponse)
         console.log('[ERR]', decode(req.originalUrl), {
           status: moduleResponse.status,
           body: moduleResponse.body,
@@ -294,17 +304,20 @@ async function serveNcmApi(options) {
       }
     })
   const constructServerSubmission = consturctServer(options.moduleDefs)
-
+  const dq = new QM.DownloadQueue('download songs')
+  dq.init()
   const [_, app] = await Promise.all([
     checkVersionSubmission,
     constructServerSubmission,
   ])
-
+  // await dq.start();
+  app.set('downloadQueue', dq)
   /** @type {import('express').Express & ExpressExtension} */
   const appExt = app
   appExt.server = app.listen(port, host, () => {
     console.log(`server running @ http://${host ? host : 'localhost'}:${port}`)
   })
+  dq.start()
 
   return appExt
 }
