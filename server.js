@@ -9,7 +9,7 @@ const { cookieToJson } = require('./util/index')
 const fileUpload = require('express-fileupload')
 const decode = require('safe-decode-uri-component')
 
-import * as QM from './queue'
+import * as Queue from './lib/queue'
 
 /**
  * The version check result.
@@ -304,7 +304,7 @@ async function serveNcmApi(options) {
       }
     })
   const constructServerSubmission = consturctServer(options.moduleDefs)
-  const dq = new QM.DownloadQueue('download songs')
+  const dq = new Queue.SongDownloadQueue('download songs')
   dq.init()
   const [_, app] = await Promise.all([
     checkVersionSubmission,
