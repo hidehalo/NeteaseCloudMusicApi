@@ -10,6 +10,8 @@ const fileUpload = require('express-fileupload')
 const decode = require('safe-decode-uri-component')
 
 import * as Queue from './lib/queue'
+import { StaticIpRequest } from './lib/http'
+import { ServerContext } from './lib/context'
 
 /**
  * The version check result.
@@ -223,24 +225,11 @@ async function consturctServer(moduleDefs) {
       )
 
       try {
-        const reqWrapper = (...params) => {
-          // 参数注入客户端IP
-          const obj = [...params]
-          let ip = req.ip
-
-          if (ip.substr(0, 7) == '::ffff:') {
-            ip = ip.substr(7)
-          }
-          // console.log(ip)
-          obj[3] = {
-            ...obj[3],
-            ip,
-          }
-          return request(...obj)
-        }
+        let staticIpReq = new StaticIpRequest(req.ip)
+        query.ip = req.ip
         const moduleResponse = await moduleDef.module(
           query,
-          reqWrapper,
+          staticIpReq.send.bind(staticIpReq),
           moduleDef.app,
         )
         console.log('[OK]', decode(req.originalUrl))
@@ -304,20 +293,34 @@ async function serveNcmApi(options) {
       }
     })
   const constructServerSubmission = consturctServer(options.moduleDefs)
-  const dq = new Queue.SongDownloadQueue('download songs')
-  dq.init()
   const [_, app] = await Promise.all([
     checkVersionSubmission,
     constructServerSubmission,
   ])
-  // await dq.start();
+
+  let context = new ServerContext()
+  app.set('context', context)
+
+  const quitSignal = () => context.emit('done')
+  process.on('SIGINT', quitSignal)
+  process.on('SIGQUIT', quitSignal)
+  process.on('SIGTERM', quitSignal)
+
+  const dq = new Queue.SongDownloadQueue(context, 'download songs')
+  dq.init()
   app.set('downloadQueue', dq)
+  dq.start()
+  context.on('done', async () => await dq.close())
+
   /** @type {import('express').Express & ExpressExtension} */
   const appExt = app
   appExt.server = app.listen(port, host, () => {
     console.log(`server running @ http://${host ? host : 'localhost'}:${port}`)
   })
-  dq.start()
+
+  context.on('done', () => {
+    appExt.server.close(() => process.exit(0))
+  })
 
   return appExt
 }
