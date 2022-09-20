@@ -113,7 +113,7 @@ class SongDownloadQueue {
   async handle(job: BullMQ.Job) {
     const eventHandler = {
       end: (stat) => {
-        console.log(`${stat.filePath} 下载完成`);
+        this.context.logger.info(`${stat.filePath} 下载完成`);
         job.updateProgress(100);
       },
       error: (err) => {
@@ -123,28 +123,28 @@ class SongDownloadQueue {
     let jobData = job.data as DownloadSongJobData;
     const done = await this.songDownloader.download(
       this.context,
-      '/Users/tianchen/Music/网易云音乐', 
+      '/Users/TianChen/Music/网易云音乐', 
       jobData.resolvedSong, 
       eventHandler);
     if (!done) {
-      console.error('下载失败');
+      this.context.logger.error('下载失败');
     }
   }
 
   onCompleted(job: BullMQ.Job, result: any, prev: string) {
-    console.log(job.id, 'compelted');
+    this.context.logger.info(`${job.id} was completed`);
   }
 
   onFailed(job: BullMQ.Job, error: Error, prev: string) {
-    console.log(error);
+    this.context.logger.info(error);
   }
 
   onProgress(job: BullMQ.Job, progress: number|object) {
-    console.log(progress);
+    this.context.logger.info(progress);
   }
   
   async start() {
-    console.log("queue is bootstrapping");
+    this.context.logger.info("queue is bootstrapping");
     if (this.state != Status.Initiated) {
       return;
     }
@@ -165,11 +165,11 @@ class SongDownloadQueue {
     if (this.worker.isPaused()) {
       this.worker.resume();
     } else {
-      console.log("start to running...");
-      this.worker.run().then((ret) => {console.log(ret)});
+      this.context.logger.info("start to running...");
+      this.worker.run().then((ret) => {this.context.logger.info(ret)});
     }
     this.state = Status.Started;
-    console.log("queue was bootstrapped");
+    this.context.logger.info("queue was bootstrapped");
   }
 
   async stop() {

@@ -1,4 +1,5 @@
 import EventEmitter from "events";
+import { Logger } from 'winston'
 
 interface Events {
   done: () => any
@@ -8,8 +9,10 @@ interface Events {
 class ServerContext {
 
   delegate: EventEmitter
+  logger: Logger
 
-  constructor() {
+  constructor(logger: Logger) {
+    this.logger = logger;
     this.delegate = new EventEmitter({captureRejections:true});
     this.delegate.setMaxListeners(Infinity);
   }

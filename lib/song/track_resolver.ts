@@ -17,13 +17,23 @@ class TrackResolver {
     let songs = [];
     let lastSong = null;
     let ret = [] as ResolvedTrack;
-    do {
+
+    while (true) {
       let offset = (page-1) * length;
       let newQuery = {...query} as any;
       newQuery.offset = offset;
       newQuery.limit = length;
+      // TODO: 不要等待所有数据读取完成再去进行下载
       let songsResp = await songsPaginator(newQuery, request.send.bind(request));
-      songs = songsResp.body.songs;
+      songs = songsResp.body?.songs;
+      
+      if (!songs || !songs.length) {
+        break;
+      }
+
+      if (songs[songs.length-1].id == lastSong?.song?.id) {
+        break
+      }
 
       for (let i = 0; i < songs.length; i++) {
         let song = songs[i] as Song;
@@ -38,14 +48,10 @@ class TrackResolver {
         lastSong = resolvedSong;
         ret.push(resolvedSong);
       }
-
-      if (lastSong == null) {
-        break;
-      }
+      console.log(`read page ${page} ${songs?.length} records`)
 
       page++;
-    } 
-    while (lastSong && songs[songs.length-1].id != lastSong?.song?.id);
+    }
 
     return ret;
   }

@@ -49,7 +49,7 @@ class SongDownloader {
     const targetPath = `${rootPath}/${resolvedSong.artisans[0].name}/${resolvedSong.album.name}`;
     if (!fs.existsSync(targetPath)){
         fs.mkdirSync(targetPath, { recursive: true });
-        console.info(`Create directory ${targetPath}`);
+        context.logger.info(`创建目录 ${targetPath}`);
     }
     // TODO: 处理 server 退出信号
     const dl = new DownloaderHelper(
@@ -70,11 +70,11 @@ class SongDownloader {
     context.on('done', async () => await dl.stop())
 
     dl.on('skip', (stats) => {
-      console.info(`跳过下载 ${stats.filePath}`);
+      context.logger.info(`跳过下载 ${stats.filePath}`);
     });
 
     dl.on('stop', () => {
-      console.info('检测到终止信号，提前结束下载');
+      context.logger.error('检测到终止信号，提前结束下载');
     });
 
     if (eventHandler?.end) {
@@ -86,7 +86,7 @@ class SongDownloader {
     }
 
     return dl.start().catch((reason) => {
-      console.error(reason);
+      context.logger.error(reason);
     });
   }
 }

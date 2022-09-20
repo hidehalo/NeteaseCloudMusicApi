@@ -1,7 +1,6 @@
 const fs = require('fs')
 const path = require('path')
 const express = require('express')
-const request = require('./util/request')
 const packageJSON = require('./package.json')
 const exec = require('child_process').exec
 const cache = require('./util/apicache').middleware
@@ -12,6 +11,7 @@ const decode = require('safe-decode-uri-component')
 import * as Queue from './lib/queue'
 import { StaticIpRequest } from './lib/http'
 import { ServerContext } from './lib/context'
+import { transports, format, createLogger } from 'winston'
 
 /**
  * The version check result.
@@ -232,7 +232,8 @@ async function consturctServer(moduleDefs) {
           staticIpReq.send.bind(staticIpReq),
           moduleDef.app,
         )
-        console.log('[OK]', decode(req.originalUrl))
+        let logger = app.get('logger')
+        logger.info('[OK]' + decode(req.originalUrl))
 
         const cookies = moduleResponse.cookie
         if (Array.isArray(cookies) && cookies.length > 0) {
@@ -250,11 +251,9 @@ async function consturctServer(moduleDefs) {
         }
         res.status(moduleResponse.status).send(moduleResponse.body)
       } catch (/** @type {*} */ moduleResponse) {
-        console.log(moduleResponse)
-        console.log('[ERR]', decode(req.originalUrl), {
-          status: moduleResponse.status,
-          body: moduleResponse.body,
-        })
+        let logger = app.get('logger')
+        logger.error('[ERR]' + decode(req.originalUrl))
+        logger.info(JSON.stringify(moduleResponse))
         if (!moduleResponse.body) {
           res.status(404).send({
             code: 404,
@@ -297,8 +296,30 @@ async function serveNcmApi(options) {
     checkVersionSubmission,
     constructServerSubmission,
   ])
+  // TODO: source file&line number
+  const logger = createLogger({
+    level: 'info',
+    transports: [
+      new transports.File({
+        filename: 'logs/server.log',
+        level: 'info',
+        format: format.combine(
+          format.timestamp({ format: 'MMM-DD-YYYY HH:mm:ss' }),
+          format.align(),
+          format.printf((info) => {
+            const f = getFileName()
 
-  let context = new ServerContext()
+            return `${info.level}: ${[info.timestamp]}: ${f.file}: ${f.row}: ${
+              f.column
+            }: ${info.message}`
+          }),
+        ),
+      }),
+    ],
+  })
+
+  app.set('logger', logger)
+  let context = new ServerContext(logger)
   app.set('context', context)
 
   const quitSignal = () => context.emit('done')
@@ -323,6 +344,25 @@ async function serveNcmApi(options) {
   })
 
   return appExt
+}
+
+function getFileName() {
+  var fileName = ''
+  var rowNumber
+  var columnNumber
+  var currentStackPosition = 1 // this is the value representing the position of your caller in the error stack.
+  try {
+    throw new Error('Custom Error')
+  } catch (e) {
+    Error['prepareStackTrace'] = function () {
+      return arguments[1]
+    }
+    Error.prepareStackTrace(e, function () {})
+    fileName = e.stack[currentStackPosition].getFileName()
+    rowNumber = e.stack[currentStackPosition].getLineNumber()
+    columnNumber = e.stack[currentStackPosition].getColumnNumber()
+  }
+  return { file: fileName, row: rowNumber, column: columnNumber }
 }
 
 module.exports = {
