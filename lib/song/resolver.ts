@@ -1,4 +1,5 @@
 import getSongsDetail from '../../module/song_detail';
+import { ServerContext } from '../context';
 import { StaticIpRequest, BasicQuery } from '../http'
 
 type Duration = number
@@ -45,9 +46,14 @@ interface SongQuery extends BasicQuery {
 }
 
 class SongResolver {
+  context: ServerContext
+
+  constructor(context: ServerContext) {
+    this.context = context;
+  }
 
   async resolveBatch(query: BatchSongQuery): Promise<ResolvedSong[]> {
-    let request = new StaticIpRequest(query.ip);
+    let request = new StaticIpRequest(this.context, query.ip);
     let songsResp = await getSongsDetail(query, request.send.bind(request));
     let resolvedSongs = [] as ResolvedSong[];
     for (let i = 0; i < songsResp.body.songs.length; i++) {

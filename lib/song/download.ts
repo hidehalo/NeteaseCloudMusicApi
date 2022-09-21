@@ -32,7 +32,7 @@ function parseExtension(url: string): string {
 class SongDownloader {
 
   async download(context: ServerContext, rootPath: string, resolvedSong: ResolvedSong, eventHandler: EventHandler): Promise<boolean | void> {
-    const request = new StaticIpRequest(resolvedSong.query.ip);
+    const request = new StaticIpRequest(context, resolvedSong.query.ip);
     let downloadResp = await getDownloadUrl(resolvedSong.query, request.send.bind(request));
     const http = {
       method: 'GET',
@@ -51,7 +51,6 @@ class SongDownloader {
         fs.mkdirSync(targetPath, { recursive: true });
         context.logger.info(`创建目录 ${targetPath}`);
     }
-    // TODO: 处理 server 退出信号
     const dl = new DownloaderHelper(
       http.url, 
       targetPath,
@@ -63,18 +62,27 @@ class SongDownloader {
         fileName: `${resolvedSong.song.name}${parseExtension(http.url)}`,
         override: {
           skip: true
-        }
+        },
+        timeout: 30 * 1e3/**30秒 */
       }
     );
 
-    context.on('done', async () => await dl.stop())
+    context.on('done', async () => {
+      if (dl.getStats().progress < 100) {
+        await dl.stop()
+      }
+    })
+
+    dl.on('start', () => {
+      context.logger.info(`开始下载歌曲 ${resolvedSong.song.name}`);
+    })
 
     dl.on('skip', (stats) => {
       context.logger.info(`跳过下载 ${stats.filePath}`);
     });
 
     dl.on('stop', () => {
-      context.logger.error('检测到终止信号，提前结束下载');
+      context.logger.info('检测到中止信号，提前结束下载并删除文件');
     });
 
     if (eventHandler?.end) {
@@ -85,9 +93,12 @@ class SongDownloader {
       dl.on('error', eventHandler?.error);
     }
 
-    return dl.start().catch((reason) => {
+    const ok = await dl.start().catch(async (reason) => {
       context.logger.error(reason);
+      return false;
     });
+    
+    return ok;
   }
 }
 

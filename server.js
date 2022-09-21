@@ -225,7 +225,7 @@ async function consturctServer(moduleDefs) {
       )
 
       try {
-        let staticIpReq = new StaticIpRequest(req.ip)
+        let staticIpReq = new StaticIpRequest(app.get('context'), req.ip)
         query.ip = req.ip
         const moduleResponse = await moduleDef.module(
           query,

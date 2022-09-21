@@ -1,6 +1,7 @@
 import { ResolvedSong, Song, SongQuery } from "./resolver";
 import songsPaginator from  '../../module/playlist_track_all';
 import { StaticIpRequest, BasicQuery } from '../http';
+import { ServerContext } from "../context";
 
 type ResolvedTrack = ResolvedSong[];
 
@@ -8,10 +9,69 @@ interface TrackQuery extends BasicQuery {
   id: string
 }
 
+interface ChunkQuery extends TrackQuery {
+  offset: number
+  limit: number
+}
+
+class Chunk {
+  query: ChunkQuery
+  request: StaticIpRequest
+  resolved: boolean
+  resolvedData: ResolvedTrack
+
+  constructor(query: ChunkQuery, request: StaticIpRequest) {
+    this.query = query;
+    this.request = request;
+    this.resolved = false;
+    this.resolvedData = [];
+  }
+
+  next(): Chunk {
+    let newQuery = {...this.query};
+    newQuery.offset = this.query.offset + this.query.limit;
+    return new Chunk(newQuery, this.request);
+  }
+
+  async resolve(): Promise<ResolvedTrack> {
+    if (this.resolved) {
+      return this.resolvedData;
+    }
+
+    let songsResp = await songsPaginator(this.query, this.request.send.bind(this.request));
+    let songs = songsResp.body?.songs;
+    if (!songs || !songs.length) {
+      this.resolved = true;
+      return this.resolvedData;
+    }
+
+    for (let i = 0; i < songs.length; i++) {
+      let song = songs[i] as Song;
+      let songQuery = {
+        id: song.id,
+        ip: this.query.ip,
+        cookie: this.query.cookie,
+        proxy: this.query?.proxy,
+        realIp: this.query?.realIp,
+      } as SongQuery;
+      let resolvedSong = new ResolvedSong(songQuery, song);
+      this.resolvedData.push(resolvedSong);
+    }
+
+    this.resolved = true;
+    return this.resolvedData;
+  }
+}
+
 class TrackResolver {
+  context: ServerContext;
+
+  constructor(context: ServerContext) {
+    this.context = context;
+  }
 
   async resolve(query: TrackQuery): Promise<ResolvedTrack> {
-    const request = new StaticIpRequest(query.ip);
+    const request = new StaticIpRequest(this.context, query.ip);
     let page = 1;
     const length = 100;
     let songs = [];
@@ -23,7 +83,6 @@ class TrackResolver {
       let newQuery = {...query} as any;
       newQuery.offset = offset;
       newQuery.limit = length;
-      // TODO: 不要等待所有数据读取完成再去进行下载
       let songsResp = await songsPaginator(newQuery, request.send.bind(request));
       songs = songsResp.body?.songs;
       
@@ -48,12 +107,19 @@ class TrackResolver {
         lastSong = resolvedSong;
         ret.push(resolvedSong);
       }
-      console.log(`read page ${page} ${songs?.length} records`)
 
       page++;
     }
 
     return ret;
+  }
+
+  chunk(query: TrackQuery): Chunk {
+    const request = new StaticIpRequest(this.context, query.ip);
+    let chunkQuery = {...query} as ChunkQuery;
+    chunkQuery.offset = 0;
+    chunkQuery.limit = 100;
+    return new Chunk(chunkQuery, request);
   }
 }
 

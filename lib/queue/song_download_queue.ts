@@ -5,7 +5,6 @@ import {
   SongQuery, BatchSongQuery, 
   TrackResolver, TrackQuery
 } from '../song';
-
 import { ServerContext } from '../context';
 
 export interface SongDownloadParams {
@@ -55,8 +54,8 @@ class SongDownloadQueue {
     this.queueName = queueName;
     this.concurrency = concurrency;
     this.state = Status.Build;
-    this.songResolver = new SongResolver();
-    this.trackResolver = new TrackResolver();
+    this.songResolver = new SongResolver(this.context);
+    this.trackResolver = new TrackResolver(this.context);
     this.songDownloader = new SongDownloader();
   }
 
@@ -73,17 +72,19 @@ class SongDownloadQueue {
     this.state = Status.Initiated;
   }
 
-  private addResolvedSongs(resolvedSongs: ResolvedSong[]) {
-    let promises = [];
+  private async addResolvedSongs(resolvedSongs: ResolvedSong[]) {
+    let jobsBatch = [];
     for (let i = 0; i < resolvedSongs.length; i++) {
       let jobName = `download ${resolvedSongs[i].song.id}`;
       let jobData = {
         resolvedSong: resolvedSongs[i],
       } as DownloadSongJobData;
-      let promise = this.queueDelegate?.add(jobName, jobData);
-      promises.push(promise);
+      jobsBatch.push({
+        name: jobName,
+        data: jobData
+      });
     }
-    return Promise.all(promises);
+    await this.queueDelegate?.addBulk(jobsBatch);
   }
 
   async downloadSong(query: SongQuery) {
@@ -92,18 +93,25 @@ class SongDownloadQueue {
       ids: [query.id],
       cookie: query.cookie,
     } as BatchSongQuery;
-    let resolvedSongs = await this.downloadSongs(batchQuery);
-    return resolvedSongs[0];
+    await this.downloadSongs(batchQuery);
   }
 
   async downloadSongs(query: BatchSongQuery) {
     let resolvedSongs = await this.songResolver.resolveBatch(query);
-    return this.addResolvedSongs(resolvedSongs);
+    await this.addResolvedSongs(resolvedSongs);
   }
 
   async downloadTrack(query: TrackQuery) {
-    let resolvedSongs = await this.trackResolver.resolve(query);
-    return this.addResolvedSongs(resolvedSongs);
+    // let resolvedSongs = await this.trackResolver.resolve(query);
+    let chunk = this.trackResolver.chunk(query);
+    let resolvedSongs = [];
+    do {
+      resolvedSongs = await chunk.resolve();
+      this.context.logger.info(`offset: ${chunk.query.offset} limit: ${chunk.query.limit}`)
+      await this.addResolvedSongs(resolvedSongs)
+      chunk = chunk.next();
+    }
+    while (resolvedSongs.length > 0);
   }
 
   getJobId(songId: string): string {
@@ -111,32 +119,39 @@ class SongDownloadQueue {
   }
 
   async handle(job: BullMQ.Job) {
+    let jobData = job.data as DownloadSongJobData;
+    const context = this.context;
     const eventHandler = {
-      end: (stat) => {
-        this.context.logger.info(`${stat.filePath} 下载完成`);
-        job.updateProgress(100);
+      end: async (stat) => {
+        let message = `${stat.filePath} 下载完成`;
+        context.logger.info(message);
       },
-      error: (err) => {
-        job.failedReason = err.message
+      error: async (err) => {
+        job.failedReason = err.message? err.message: '未知原因';
+        throw new Error(err.message);
       }
     } as EventHandler;
-    let jobData = job.data as DownloadSongJobData;
     const done = await this.songDownloader.download(
-      this.context,
+      context,
       '/Users/TianChen/Music/网易云音乐', 
       jobData.resolvedSong, 
       eventHandler);
     if (!done) {
-      this.context.logger.error('下载失败');
+      context.logger.error(`歌曲 ${jobData.resolvedSong.song.name} 下载失败`)
     }
+    return done;
   }
 
   onCompleted(job: BullMQ.Job, result: any, prev: string) {
-    this.context.logger.info(`${job.id} was completed`);
+    this.context.logger.info(`任务 ${job.id} 已完成`);
   }
 
   onFailed(job: BullMQ.Job, error: Error, prev: string) {
-    this.context.logger.info(error);
+    this.context.logger.info(`任务 ${job.id} 已失败，原因是 ${job.failedReason}`);
+  }
+
+  onError(err: Error) {
+    this.context.logger.error(err.message);
   }
 
   onProgress(job: BullMQ.Job, progress: number|object) {
@@ -144,7 +159,7 @@ class SongDownloadQueue {
   }
   
   async start() {
-    this.context.logger.info("queue is bootstrapping");
+    this.context.logger.info("歌曲下载队列开始启动");
     if (this.state != Status.Initiated) {
       return;
     }
@@ -160,16 +175,16 @@ class SongDownloadQueue {
       });
       this.worker.on('completed', this.onCompleted.bind(this));
       this.worker.on('failed', this.onFailed.bind(this));
-      this.worker.on('progress', this.onProgress.bind(this));
+      this.worker.on('error', this.onError.bind(this));
+      // this.worker.on('progress', this.onProgress.bind(this));
     }
     if (this.worker.isPaused()) {
       this.worker.resume();
     } else {
-      this.context.logger.info("start to running...");
-      this.worker.run().then((ret) => {this.context.logger.info(ret)});
+      this.context.logger.info("歌曲下载队列运行中...");
+      this.worker.run();
     }
     this.state = Status.Started;
-    this.context.logger.info("queue was bootstrapped");
   }
 
   async stop() {
@@ -181,12 +196,14 @@ class SongDownloadQueue {
   }
 
   async close() {
-    this.state = Status.Closing;
-    // FIXME: 如果 worker 关闭了 queue 没关闭呢？
-    return Promise.all([
-      this.worker?.close(),
-      this.queueDelegate?.close()
-    ]).then(() => this.state = Status.Closed);
+    if (this.state != Status.Closed) {
+      this.state = Status.Closing;
+      // FIXME: 如果 worker 关闭了 queue 没关闭呢？
+      return Promise.all([
+        this.worker?.close(),
+        this.queueDelegate?.close()
+      ]).then(() => this.state = Status.Closed);
+    }
   }
 }
 

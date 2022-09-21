@@ -1,10 +1,13 @@
 import createRequest from '../../util/request'
+import { ServerContext } from '../context'
 
 class StaticIpRequest {
   ip: string;
+  context: ServerContext;
 
-  constructor(ip: string) {
+  constructor(context: ServerContext, ip: string) {
     this.ip = ip;
+    this.context = context;
   }
 
   send(
@@ -18,8 +21,8 @@ class StaticIpRequest {
       if (ip.substr(0, 7) == '::ffff:') {
         ip = ip.substr(7)
       }
-      const injectIpOptions = {...options, ip}
-    
+      const injectIpOptions = {...options, ip, context: this.context}
+
       return createRequest(method, url, data, injectIpOptions);
   }
 }

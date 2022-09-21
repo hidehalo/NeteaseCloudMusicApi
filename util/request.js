@@ -44,6 +44,11 @@ const chooseUserAgent = (ua = false) => {
 }
 const createRequest = (method, url, data = {}, options) => {
   return new Promise((resolve, reject) => {
+    if (options.context) {
+      options.context.on('done', () =>
+        reject(`检测到中止信号，取消访问 ${method} ${url}`),
+      )
+    }
     let headers = { 'User-Agent': chooseUserAgent(options.ua) }
     if (method.toUpperCase() === 'POST')
       headers['Content-Type'] = 'application/x-www-form-urlencoded'
