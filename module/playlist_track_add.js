@@ -9,7 +9,6 @@ module.exports = async (query, request) => {
       }),
     ),
   }
-  console.log(data)
 
   return request('POST', `https://music.163.com/api/playlist/track/add`, data, {
     crypto: 'weapi',

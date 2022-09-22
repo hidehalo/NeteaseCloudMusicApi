@@ -280,7 +280,6 @@ async function consturctServer(moduleDefs) {
  * @returns {Promise<import('express').Express & ExpressExtension>}
  */
 async function serveNcmApi(options) {
-  // TODO: source file&line number
   const logger = createLogger({
     level: 'info',
     transports: [
@@ -323,14 +322,15 @@ async function serveNcmApi(options) {
   app.set('logger', logger)
   app.set('context', context)
 
-  process.on('beforeExit', () => {
+  process.once('SIGINT', () => {
     context.logger.info('服务器开始关闭...')
     context.emit('done')
+    context.logger.info('服务器已关闭')
   })
 
   context.on('done', () => {
     appExt.server.close(() => {
-      context.logger.info('服务器已关闭')
+      context.logger.info('HTTP 服务已关闭')
     })
   })
 

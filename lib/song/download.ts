@@ -1,4 +1,4 @@
-import { DownloaderHelper, ErrorStats, DownloadEvents } from 'node-downloader-helper';
+import { DownloaderHelper, DH_STATES, DownloadEvents } from 'node-downloader-helper';
 import { ResolvedSong } from './resolver'
 import getDownloadUrl from '../../module/song_download_url';
 import { StaticIpRequest } from '../http';
@@ -47,6 +47,7 @@ class SongDownloadTask {
   rootDir: string;
   http: HttpEntity;
   state: SongDownloadTaskStatus;
+  dlState?: DH_STATES;
   resolvedSong: ResolvedSong;
   err?: Error;
 
@@ -68,6 +69,7 @@ class SongDownloadTask {
   }
 
   private parseExtension(url: string): string {
+    // FIXME: url 有时是 null
     const basename = path.basename(url);
     const firstDot = basename.indexOf('.');
     const lastDot = basename.lastIndexOf('.');
@@ -92,9 +94,12 @@ class SongDownloadTask {
     return StatusDescription[this.state];
   }
 
+  getTargetPath(): string {
+    return `${this.getTargetDir()}/${this.getFileName()}`;
+  }
+
   async run() {
     this.state = SongDownloadTaskStatus.Waiting;
-    // TODO: 文件存在则不要开启sock
     if (this.hasFileExists()) {
       this.state = SongDownloadTaskStatus.Skipped
       return
@@ -131,22 +136,25 @@ class SongDownloadTask {
     this.context.on('done', async () => {
       const stat = dl.getStats();
       if (stat.downloaded < stat.total) {
-        console.log(stat);
         this.state = SongDownloadTaskStatus.Cancel;
-        // FIXME: stop 会产生一个 unlink syscall，这时候文件或许并不存在
-        // FIXME: stop twice maybe
-        await dl.stop()
+        if (this.dlState != DH_STATES.STOPPED && fs.existsSync(stat.name)) {
+          await dl.stop()
+        }
       }
     })
 
+    dl.on('stateChanged', (state) => this.dlState = state);
+
     dl.on('timeout', () => {
       this.state = SongDownloadTaskStatus.Timeout;
-      this.context.logger.info(`歌曲 『${this.resolvedSong.song.name}』 下载超时`);
+      this.context.logger.info(`歌曲 『${this.resolvedSong.song.name}』 下载超时`, {
+        url: this.http.url
+      });
     });
 
     dl.on('start', () => {
       this.state = SongDownloadTaskStatus.Downloading;
-      this.context.logger.info(`开始下载歌曲 ${this.resolvedSong.song.name}`);
+      this.context.logger.info(`开始下载歌曲 『${this.resolvedSong.song.name}』`);
     })
 
     dl.on('skip', (stats) => {
@@ -156,7 +164,7 @@ class SongDownloadTask {
 
     dl.on('stop', () => {
       this.context.logger.info(`检测到中止信号，提前结束下载并删除歌曲 『${this.resolvedSong.song.name}』`, {
-        path: `${this.getTargetDir()}/${this.getFileName()}`,
+        path: this.getTargetPath(),
         desc: this.getStateDescription(),
         error: this.err,
       });
@@ -169,7 +177,7 @@ class SongDownloadTask {
       } else {
         this.state = SongDownloadTaskStatus.Downloaded;
         this.context.logger.info(`歌曲 『${this.resolvedSong.song.name}』 下载完成`, {
-          path: `${this.getTargetDir()}/${this.getFileName()}`
+          path: this.getTargetPath()
         });
       }
     })
@@ -177,7 +185,9 @@ class SongDownloadTask {
     dl.on('error', async (err) => {
       this.err = new Error(err.message);
       this.state = SongDownloadTaskStatus.Error;
-      await dl.stop();
+      if (this.dlState != DH_STATES.STOPPED && fs.existsSync(this.getTargetPath())) {
+        await dl.stop();
+      }
     });
 
     await dl.start().catch((reason) => {

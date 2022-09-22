@@ -50,6 +50,8 @@ class SongDownloadQueue {
 
   queueDelegate?: BullMQ.Queue;
 
+  queueSchd?: BullMQ.QueueScheduler;
+
   worker?: BullMQ.Worker;
 
   consumer: Consumer;
@@ -83,7 +85,14 @@ class SongDownloadQueue {
       return;
     }
     this.queueDelegate = new BullMQ.Queue(this.queueName, {
-      connection: this.getRedisConnConfig()
+      connection: this.getRedisConnConfig(),
+      defaultJobOptions: {
+        attempts: 5,
+        backoff: {
+          type: 'exponential',
+          delay: 1000,
+        },
+      },
     });
     this.state = Status.Initiated;
     this.context.on('done', async () => await this.close())
@@ -136,17 +145,23 @@ class SongDownloadQueue {
 
     this.context.logger.info("歌曲下载队列开始启动");
     if (!this.worker) {
+      // FIXME: 当队列中存在大量任务时，worker 完全不设置屏障的读取了大量的任务进行执行
+      // 这可能会直接耗尽服务器的 socket 资源
       this.worker = new BullMQ.Worker(this.queueName, this.consumer.handle.bind(this.consumer), {
         autorun: false,
-        concurrency: this.concurrency,
-        connection: this.getRedisConnConfig()
+        concurrency: 1,
+        connection: this.getRedisConnConfig(),
+        limiter: {
+          max: this.concurrency,
+          duration: 1 * 1e3
+        }
       });
 
-      this.worker.on('closed', () => {
+      this.worker.once('closed', () => {
         this.context.logger.warn('worker closed');
       });
 
-      this.worker.on('closing', () => {
+      this.worker.once('closing', () => {
         this.context.logger.warn('worker closing');
       });
 
@@ -170,6 +185,18 @@ class SongDownloadQueue {
       this.context.logger.info("歌曲下载队列运行中...");
       this.worker.run();
     }
+
+    if (!this.queueSchd) {
+      this.queueSchd = new BullMQ.QueueScheduler(this.queueName, {
+        connection: this.getRedisConnConfig(),
+        autorun: false,
+      });
+    }
+
+    if (!this.queueSchd.isRunning()) {
+      this.queueSchd.run();
+    }
+
     this.state = Status.Started;
   }
 
@@ -184,18 +211,21 @@ class SongDownloadQueue {
   }
 
   async close() {
-    if (this.state != Status.Closed) {
+    let oldState = this.state;
+    if (this.state != Status.Closed && this.state != Status.Closing) {
       this.context.logger.info("歌曲下载队列开始关闭");
       this.state = Status.Closing;
 
       return await Promise.all([
         this.worker?.close(),
-        this.queueDelegate?.close()
+        this.queueDelegate?.close(),
+        this.queueSchd?.close()
       ]).then(() => {
         this.state = Status.Closed;
         this.context.logger.info("歌曲下载队列已关闭");
         return true;
       }).catch(() => {
+        this.state = oldState;
         return false;
       });
     }
@@ -222,6 +252,7 @@ class Consumer {
   // }
 
   async handle(job: BullMQ.Job) {
+    // FIXME: 执行结果总是任务完成，没有错误和失败状态了
     if (this.queue.state != Status.Started) {
       throw new Error('队列已关闭');
     }
@@ -259,7 +290,15 @@ class Consumer {
         result.state = DownloadJobStatus.Error;
         result.err = err as Error
       } finally {
-        resolve(result);
+        if (result.state == DownloadJobStatus.Succeed) {
+          resolve(result);
+        } else {
+          if (result.err) {
+            reject(result.err)
+          } else {
+            reject(new Error(job.failedReason))
+          }
+        }
       }
     })
 
@@ -276,7 +315,7 @@ class Consumer {
         job.failedReason = '执行任务超时';
         handleContext.logger.warn(`任务 ${job.id} 执行超时`)
         resolve(result)
-      }, 120 * 1000/**微秒 */)
+      }, 60 * 1000/**微秒 */)
     })
 
     let run = Promise.race([
@@ -338,7 +377,6 @@ class Producer {
   }
 
   async downloadTrack(query: TrackQuery) {
-    // FIXME: 队列worker会假死
     // let resolvedSongs = await this.trackResolver.resolve(query);
     let chunk = this.trackResolver.chunk(query);
     let resolvedSongs = [];
