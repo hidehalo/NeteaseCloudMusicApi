@@ -102,6 +102,7 @@ class SongDownloadQueue {
   }
 
   async downloadTrack(query: TrackQuery) {
+    // FIXME: 队列worker会假死
     // let resolvedSongs = await this.trackResolver.resolve(query);
     let chunk = this.trackResolver.chunk(query);
     let resolvedSongs = [];
@@ -133,7 +134,7 @@ class SongDownloadQueue {
     } as EventHandler;
     const done = await this.songDownloader.download(
       context,
-      '/Users/TianChen/Music/网易云音乐', 
+      '/Users/TianChen/Music/NeteaseMusic', 
       jobData.resolvedSong, 
       eventHandler);
     if (!done) {

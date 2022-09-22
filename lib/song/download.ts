@@ -45,8 +45,13 @@ class SongDownloader {
           return `${encodeURIComponent(key)}=${encodeURIComponent(http.cookie[key as CookieKey])}`
       })
       .join('; ');
-
-    const targetPath = `${rootPath}/${resolvedSong.artisans[0].name}/${resolvedSong.album.name}`;
+    let artisanNames = [];
+    for (let i = 0; i < resolvedSong.artisans.length; i++) {
+      artisanNames.push(resolvedSong.artisans[i].name);
+    }
+    const targetPath = `${rootPath}/${artisanNames.join(',')}/${resolvedSong.album.name}`;
+    // TODO: 文件存在则不要开启sock
+    // TODO: 文件名如果太长需要做处理
     if (!fs.existsSync(targetPath)){
         fs.mkdirSync(targetPath, { recursive: true });
         context.logger.info(`创建目录 ${targetPath}`);
@@ -72,6 +77,10 @@ class SongDownloader {
         await dl.stop()
       }
     })
+
+    dl.on('timeout', () => {
+      // TODO: 处理下载超时
+    });
 
     dl.on('start', () => {
       context.logger.info(`开始下载歌曲 ${resolvedSong.song.name}`);

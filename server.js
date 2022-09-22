@@ -12,6 +12,7 @@ import * as Queue from './lib/queue'
 import { StaticIpRequest } from './lib/http'
 import { ServerContext } from './lib/context'
 import { transports, format, createLogger } from 'winston'
+import { fileTrace } from './lib/logger/format'
 
 /**
  * The version check result.
@@ -304,15 +305,10 @@ async function serveNcmApi(options) {
         filename: 'logs/server.log',
         level: 'info',
         format: format.combine(
-          format.timestamp({ format: 'MMM-DD-YYYY HH:mm:ss' }),
-          format.align(),
-          format.printf((info) => {
-            const f = getFileName()
-
-            return `${info.level}: ${[info.timestamp]}: ${f.file}: ${f.row}: ${
-              f.column
-            }: ${info.message}`
-          }),
+          format.timestamp({ format: 'YYYY-MMM-DD HH:mm:ss' }),
+          format.logstash(),
+          format.errors(),
+          // format(fileTrace)(),
         ),
       }),
     ],
@@ -344,25 +340,6 @@ async function serveNcmApi(options) {
   })
 
   return appExt
-}
-
-function getFileName() {
-  var fileName = ''
-  var rowNumber
-  var columnNumber
-  var currentStackPosition = 1 // this is the value representing the position of your caller in the error stack.
-  try {
-    throw new Error('Custom Error')
-  } catch (e) {
-    Error['prepareStackTrace'] = function () {
-      return arguments[1]
-    }
-    Error.prepareStackTrace(e, function () {})
-    fileName = e.stack[currentStackPosition].getFileName()
-    rowNumber = e.stack[currentStackPosition].getLineNumber()
-    columnNumber = e.stack[currentStackPosition].getColumnNumber()
-  }
-  return { file: fileName, row: rowNumber, column: columnNumber }
 }
 
 module.exports = {
