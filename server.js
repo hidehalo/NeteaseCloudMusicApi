@@ -280,23 +280,6 @@ async function consturctServer(moduleDefs) {
  * @returns {Promise<import('express').Express & ExpressExtension>}
  */
 async function serveNcmApi(options) {
-  const port = Number(options.port || process.env.PORT || '3000')
-  const host = options.host || process.env.HOST || ''
-
-  const checkVersionSubmission =
-    options.checkVersion &&
-    checkVersion().then(({ npmVersion, ourVersion, status }) => {
-      if (status == VERSION_CHECK_RESULT.NOT_LATEST) {
-        console.log(
-          `最新版本: ${npmVersion}, 当前版本: ${ourVersion}, 请及时更新`,
-        )
-      }
-    })
-  const constructServerSubmission = consturctServer(options.moduleDefs)
-  const [_, app] = await Promise.all([
-    checkVersionSubmission,
-    constructServerSubmission,
-  ])
   // TODO: source file&line number
   const logger = createLogger({
     level: 'info',
@@ -314,29 +297,53 @@ async function serveNcmApi(options) {
     ],
   })
 
-  app.set('logger', logger)
   let context = new ServerContext(logger)
+  context.logger.info('服务器启动中...')
+
+  const port = Number(options.port || process.env.PORT || '3000')
+  const host = options.host || process.env.HOST || ''
+
+  const checkVersionSubmission =
+    options.checkVersion &&
+    checkVersion().then(({ npmVersion, ourVersion, status }) => {
+      if (status == VERSION_CHECK_RESULT.NOT_LATEST) {
+        console.log(
+          `最新版本: ${npmVersion}, 当前版本: ${ourVersion}, 请及时更新`,
+        )
+      }
+    })
+
+  const constructServerSubmission = consturctServer(options.moduleDefs)
+
+  const [_, app] = await Promise.all([
+    checkVersionSubmission,
+    constructServerSubmission,
+  ])
+
+  app.set('logger', logger)
   app.set('context', context)
 
-  const quitSignal = () => context.emit('done')
-  process.on('SIGINT', quitSignal)
-  process.on('SIGQUIT', quitSignal)
-  process.on('SIGTERM', quitSignal)
+  process.on('beforeExit', () => {
+    context.logger.info('服务器开始关闭...')
+    context.emit('done')
+  })
+
+  context.on('done', () => {
+    appExt.server.close(() => {
+      context.logger.info('服务器已关闭')
+    })
+  })
 
   const dq = new Queue.SongDownloadQueue(context, 'download songs')
   dq.init()
   app.set('downloadQueue', dq)
   dq.start()
-  context.on('done', async () => await dq.close())
 
   /** @type {import('express').Express & ExpressExtension} */
   const appExt = app
   appExt.server = app.listen(port, host, () => {
     console.log(`server running @ http://${host ? host : 'localhost'}:${port}`)
-  })
-
-  context.on('done', () => {
-    appExt.server.close(() => process.exit(0))
+    context.logger.info('服务器已开启')
   })
 
   return appExt

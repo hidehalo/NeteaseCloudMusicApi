@@ -14,7 +14,7 @@ module.exports = async (query, request, app) => {
   if (!downloadQuery.id) {
     resp.status = 400
   } else {
-    dq.downloadTrack(downloadQuery)
+    dq.producer.downloadTrack(downloadQuery)
   }
   return Promise.resolve(resp)
 }
