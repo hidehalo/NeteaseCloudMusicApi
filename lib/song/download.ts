@@ -1,6 +1,7 @@
 import { DownloaderHelper, DH_STATES, DownloadEvents } from 'node-downloader-helper';
 import { ResolvedSong } from './resolver'
 import getDownloadUrl from '../../module/song_download_url';
+import getDownloadUrlNew from '../../module/song_url_v1';
 import { StaticIpRequest } from '../http';
 import { ServerContext } from '../context';
 import fs from 'fs';
@@ -41,6 +42,11 @@ const StatusDescription = {
   [SongDownloadTaskStatus.Cancel]: '取消下载',
 };
 
+enum DownloadTaskRunMode {
+  Resume = 0,
+  Restart,
+}
+
 class SongDownloadTask {
 
   context: ServerContext;
@@ -60,7 +66,6 @@ class SongDownloadTask {
   }
 
   getTargetDir(): string {
-    // TODO: 文件名如果太长需要做处理
     let artisanNames = [];
     for (let i = 0; i < this.resolvedSong.artisans.length; i++) {
       artisanNames.push(this.resolvedSong.artisans[i].name);
@@ -69,7 +74,6 @@ class SongDownloadTask {
   }
 
   private parseExtension(url: string): string {
-    // FIXME: url 有时是 null
     const basename = path.basename(url);
     const firstDot = basename.indexOf('.');
     const lastDot = basename.lastIndexOf('.');
@@ -87,7 +91,7 @@ class SongDownloadTask {
   }
 
   hasFileExists(): boolean {
-    return fs.existsSync(`${this.getTargetDir()}/${this.getFileName}`);
+    return fs.existsSync(this.getTargetPath());
   }
 
   getStateDescription(): string {
@@ -98,7 +102,8 @@ class SongDownloadTask {
     return `${this.getTargetDir()}/${this.getFileName()}`;
   }
 
-  async run() {
+  // TODO: 支持 resumeFromFile 模式
+  async run(mode: DownloadTaskRunMode = DownloadTaskRunMode.Restart) {
     this.state = SongDownloadTaskStatus.Waiting;
     if (this.hasFileExists()) {
       this.state = SongDownloadTaskStatus.Skipped
@@ -110,91 +115,89 @@ class SongDownloadTask {
         fs.mkdirSync(this.getTargetDir(), { recursive: true });
     }
 
-    const cookieStr = Object.keys(this.http.cookie)
-      .map((key): string => {
-          type CookieKey = keyof typeof this.http.cookie;
-          return `${encodeURIComponent(key)}=${encodeURIComponent(this.http.cookie[key as CookieKey])}`
-      })
-      .join('; ');
-
     const dl = new DownloaderHelper(
       this.http.url, 
       this.getTargetDir(),
       {
-        headers: {
-          Cookie: cookieStr
-        },
         method: this.http.method,
         fileName: this.getFileName(),
+        // TODO: 动态配置 override
         override: {
           skip: true
         },
-        timeout: 30 * 1e3/**30秒 */
+        timeout: 300 * 1e3
       }
     );
+    this.dlState = DH_STATES.IDLE;
 
-    this.context.on('done', async () => {
-      const stat = dl.getStats();
-      if (stat.downloaded < stat.total) {
+    this.context.once('done', async () => {
+      const stats = dl.getStats();
+      if (stats.downloaded < stats.total) {
         this.state = SongDownloadTaskStatus.Cancel;
-        if (this.dlState != DH_STATES.STOPPED && fs.existsSync(stat.name)) {
+        // TODO: 根据运行模式的不同，决定是否要删除文件
+        if (this.dlState != DH_STATES.STOPPED && this.hasFileExists()) {
           await dl.stop()
         }
+        // else dl.pause()
       }
     })
 
-    dl.on('stateChanged', (state) => this.dlState = state);
+    dl.on('stateChanged', (state) => {
+      this.context.logger.debug(`下载器状态由 ${this.dlState} 变更为 ${state}`);
+      this.dlState = state;
+    });
 
     dl.on('timeout', () => {
       this.state = SongDownloadTaskStatus.Timeout;
-      this.context.logger.info(`歌曲 『${this.resolvedSong.song.name}』 下载超时`, {
+      this.context.logger.debug(`歌曲 『${this.resolvedSong.song.name}』 下载超时`, {
         url: this.http.url
       });
     });
 
-    dl.on('start', () => {
+    dl.on('download', (stats) => {
       this.state = SongDownloadTaskStatus.Downloading;
-      this.context.logger.info(`开始下载歌曲 『${this.resolvedSong.song.name}』`);
+      this.context.logger.debug(`开始下载歌曲 『${this.resolvedSong.song.name}』`);
     })
 
     dl.on('skip', (stats) => {
       this.state = SongDownloadTaskStatus.Skipped;
-      this.context.logger.info(`跳过下载歌曲 『${this.resolvedSong.song.name}』`);
+      this.context.logger.debug(`跳过下载歌曲 『${this.resolvedSong.song.name}』`);
     });
 
     dl.on('stop', () => {
-      this.context.logger.info(`检测到中止信号，提前结束下载并删除歌曲 『${this.resolvedSong.song.name}』`, {
+      this.context.logger.debug(`检测到中止信号，提前结束下载并删除歌曲 『${this.resolvedSong.song.name}』`, {
         path: this.getTargetPath(),
         desc: this.getStateDescription(),
         error: this.err,
       });
     });
 
-    dl.on('end', (stat) => {
-      if (stat.incomplete) {
-        this.state = SongDownloadTaskStatus.Error;
-        this.context.logger.warn(`歌曲 『${this.resolvedSong.song.name}』 下载失败`);
-      } else {
-        this.state = SongDownloadTaskStatus.Downloaded;
-        this.context.logger.info(`歌曲 『${this.resolvedSong.song.name}』 下载完成`, {
-          path: this.getTargetPath()
-        });
-      }
+    dl.on('end', (stats) => {
+      this.state = SongDownloadTaskStatus.Downloaded;
+      this.context.logger.info(`歌曲 『${this.resolvedSong.song.name}』 下载完成`, {
+        path: this.getTargetPath()
+      });
     })
 
     dl.on('error', async (err) => {
       this.err = new Error(err.message);
       this.state = SongDownloadTaskStatus.Error;
-      if (this.dlState != DH_STATES.STOPPED && fs.existsSync(this.getTargetPath())) {
+      // TODO: 同上
+      if (this.dlState != DH_STATES.STOPPED && this.hasFileExists()) {
         await dl.stop();
       }
     });
-
+    // TODO: 研究一下状态机的规则，是否只有 stop|end 状态会结束 `start()` 函数的阻塞？
+    // 若是这样的话，可能需要一个AbortController 手动在一些中间状态取消下载任务
     await dl.start().catch((reason) => {
       this.state = SongDownloadTaskStatus.Error;
       this.err = new Error(reason);
       return false;
     });
+
+    if (dl.getStats().downloaded != dl.getStats().total) {
+      this.context.logger.error(`歌曲 『${this.resolvedSong.song.name}』 下载失败`);
+    }
   }
 }
 
@@ -202,12 +205,20 @@ class SongDownloader {
 
   async download(context: ServerContext, rootPath: string, resolvedSong: ResolvedSong) {
     const request = new StaticIpRequest(context, resolvedSong.query.ip);
-    let downloadResp = await getDownloadUrl(resolvedSong.query, request.send.bind(request));
     const http = {
       method: 'GET',
-      url: downloadResp.body.data.url,
       cookie: resolvedSong.query.cookie
     } as HttpEntity
+    let downloadResp = await getDownloadUrl(resolvedSong.query, request.send.bind(request));
+    http.url = downloadResp.body.data.url;
+    if (!http.url) {
+      let newQuery = { ...resolvedSong.query } as any;
+      newQuery.level = 'hires';
+      // 有时 `getDownloadUrl` 无法成功获取，如果不同的 API 都无法得到下载地址
+      // 那大概率是音乐资源被下架了... :)
+      downloadResp = await getDownloadUrlNew(newQuery, request.send.bind(request));
+      http.url = downloadResp.body.data[0]?.url;
+    }
 
     const task = new SongDownloadTask(context, {
       http: http,
@@ -215,8 +226,18 @@ class SongDownloader {
       resolvedSong: resolvedSong,
     })
 
-    await task.run();
+    if (!http.url) {
+      let errMsg = `歌曲 『${resolvedSong.song.name}』 无法解析下载地址`;
+      context.logger.error(errMsg, {
+        songId: resolvedSong.song.id,
+        resp: downloadResp
+      });
+      task.state = SongDownloadTaskStatus.Error;
+      task.err = new Error(errMsg);
+      return task;
+    }
 
+    await task.run();
     return task;
   }
 }

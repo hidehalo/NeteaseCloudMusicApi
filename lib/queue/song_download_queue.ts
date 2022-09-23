@@ -7,6 +7,7 @@ import {
   
 } from '../song';
 import { ServerContext } from '../context';
+import os from 'os';
 
 export interface SongDownloadParams {
   songId: string
@@ -38,13 +39,16 @@ interface JobResult {
   err?: Error
 }
 
+interface QueueParams {
+  concurrency: number
+  taskTimeoutMicroTs: number
+}
+
 class SongDownloadQueue {
 
   context: ServerContext;
 
   queueName: string;
-
-  concurrency: number;
 
   state: Status;
 
@@ -58,13 +62,16 @@ class SongDownloadQueue {
 
   producer: Producer;
 
+  params: QueueParams;
+
   /**
    * @param {string} queueName - 队列名称
    */
-  constructor(context: ServerContext, queueName: string, concurrency: number = 4) {
-    this.context = context;
+  constructor(context: ServerContext, queueName: string, params: QueueParams) {
+    this.context = new ServerContext(context.logger);
+    context.once('done', () => this.context.emit('done'));
     this.queueName = queueName;
-    this.concurrency = concurrency;
+    this.params = params;
     this.state = Status.Build;
     this.consumer = new Consumer(this);
     this.producer = new Producer(this);
@@ -84,6 +91,18 @@ class SongDownloadQueue {
     if (this.state != Status.Build) {
       return;
     }
+
+    this.initQueue();
+    this.initScheduler();
+    this.initWorker();
+    this.state = Status.Initiated;
+  }
+
+  private initQueue() {
+    if (this.queueDelegate) {
+      return;
+    }
+
     this.queueDelegate = new BullMQ.Queue(this.queueName, {
       connection: this.getRedisConnConfig(),
       defaultJobOptions: {
@@ -94,140 +113,104 @@ class SongDownloadQueue {
         },
       },
     });
-    this.state = Status.Initiated;
-    this.context.on('done', async () => await this.close())
-
-    this.queueDelegate.on('cleaned', () => {
-      this.context.logger.info('歌曲下载队列已清空');
-    });
-    this.queueDelegate.on('error', (err) => {
-      this.context.logger.error('歌曲下载队列产生异常', [
-        err
-      ]);
-    });
-    this.queueDelegate.on('ioredis:close', () => {
-      this.context.logger.warn('歌曲下载队列 Redis 连接已断开');
-    });
-    this.queueDelegate.on('paused', () => {
-      this.context.logger.info('歌曲下载队列已暂停');
-    });
-    this.queueDelegate.on('waiting', (job) => {
-      this.context.logger.info(`歌曲下载队列正在等待任务 ${job.id}`);
-    });
-    this.queueDelegate.on('removed', (job) => {
-      this.context.logger.info(`歌曲下载队列移除任务 ${job.id}`);
-    });
-    this.queueDelegate.on('resumed', () => {
-      this.context.logger.info(`歌曲下载队列已恢复运行`);
-    });
   }
 
-  onCompleted(job: BullMQ.Job, result: any, prev: string) {
-    this.context.logger.info(`任务 ${job.id} 已完成`);
-  }
-
-  onFailed(job: BullMQ.Job, error: Error, prev: string) {
-    this.context.logger.info(`任务 ${job.id} 已失败，原因是 ${job.failedReason}`);
-  }
-
-  onError(err: Error) {
-    this.context.logger.error(err.message);
-  }
-
-  onProgress(job: BullMQ.Job, progress: number|object) {
-    this.context.logger.info(progress);
-  }
-  
-  async start() {
-    if (this.state != Status.Initiated) {
-      return;
-    }
-
-    this.context.logger.info("歌曲下载队列开始启动");
-    if (!this.worker) {
-      // FIXME: 当队列中存在大量任务时，worker 完全不设置屏障的读取了大量的任务进行执行
-      // 这可能会直接耗尽服务器的 socket 资源
-      this.worker = new BullMQ.Worker(this.queueName, this.consumer.handle.bind(this.consumer), {
-        autorun: false,
-        concurrency: 1,
-        connection: this.getRedisConnConfig(),
-        limiter: {
-          max: this.concurrency,
-          duration: 1 * 1e3
-        }
-      });
-
-      this.worker.once('closed', () => {
-        this.context.logger.warn('worker closed');
-      });
-
-      this.worker.once('closing', () => {
-        this.context.logger.warn('worker closing');
-      });
-
-      this.worker.on('paused', () => {
-        this.context.logger.warn('worker paused');
-      });
-
-      this.worker.on('resumed', () => {
-        this.context.logger.warn('worker resumed');
-      });
-
-      this.worker.on('completed', this.onCompleted.bind(this));
-      this.worker.on('failed', this.onFailed.bind(this));
-      this.worker.on('error', this.onError.bind(this));
-      // this.worker.on('progress', this.onProgress.bind(this));
-    }
-    if (this.worker.isPaused()) {
-      this.context.logger.info("歌曲下载队列恢复运行...");
-      this.worker.resume();
-    } else {
-      this.context.logger.info("歌曲下载队列运行中...");
-      this.worker.run();
-    }
-
+  private initScheduler() {
     if (!this.queueSchd) {
       this.queueSchd = new BullMQ.QueueScheduler(this.queueName, {
         connection: this.getRedisConnConfig(),
         autorun: false,
       });
     }
-
-    if (!this.queueSchd.isRunning()) {
-      this.queueSchd.run();
-    }
-
-    this.state = Status.Started;
   }
 
-  async stop() {
-    if (this.state != Status.Started) {
+  private initWorker() {
+    if (!this.worker) {
+      // FIXME: 当队列中存在大量任务时，worker 完全不设置屏障的读取了大量的任务进行执行
+      // 这可能会直接耗尽服务器的 socket 资源
+      this.worker = new BullMQ.Worker(this.queueName, this.consumer.handle.bind(this.consumer), {
+        autorun: false,
+        concurrency: this.getConcurrency(),
+        connection: this.getRedisConnConfig(),
+        limiter: {
+          max: this.getConcurrency(),
+          duration: 1e3
+        }
+      });
+      this.worker.on('completed', (job: BullMQ.Job, result: any, prev: string) => {
+        this.context.logger.debug(`任务 ${job.id} 已完成`, {job: job.data.resolvedSong.song.name});
+      });
+      this.worker.on('failed', (job: BullMQ.Job, error: Error, prev: string) => {
+        this.context.logger.debug(`任务 ${job.id} 已失败，原因是 ${job.failedReason}`, {job: job.data.resolvedSong.song.name});
+      });
+      this.worker.on('error', (err: Error) => {
+        this.context.logger.error(err.message);
+      });
+    }
+  }
+
+  getConcurrency(): number {
+    return this.params.concurrency? this.params.concurrency: os.cpus().length;
+  }
+
+  getTaskTimeout(): number {
+    return this.params.taskTimeoutMicroTs? this.params.taskTimeoutMicroTs: 3e4;
+  }
+  
+  async start() {
+    if (this.state == Status.Build) {
+      this.init();
+    } else if (this.state != Status.Initiated) {
       return;
     }
 
-    this.context.logger.info("歌曲下载队列停止运行");
-    await this.worker?.pause();
-    this.state = Status.Initiated;
+    this.context.logger.debug("歌曲下载队列服务开始启动");
+    let allThreads = [];
+    if (this.worker?.isPaused()) {
+      this.context.logger.debug("歌曲下载队列服务执行器恢复运行");
+      this.worker.resume();
+    } else {
+      this.context.logger.debug("歌曲下载队列执行器服务运行中");
+      allThreads.push(this.worker?.run());
+    }
+
+    if (!this.queueSchd?.isRunning()) {
+      this.context.logger.debug("歌曲下载队列调度服务运行中");
+      allThreads.push(this.queueSchd?.run());
+    }
+
+    this.state = Status.Started;
+    this.context.once('done', async () => {
+      await this.close();
+    })
+    await Promise.all(allThreads);
   }
 
   async close() {
     let oldState = this.state;
     if (this.state != Status.Closed && this.state != Status.Closing) {
-      this.context.logger.info("歌曲下载队列开始关闭");
+      this.context.logger.debug("歌曲下载队列服务开始关闭");
       this.state = Status.Closing;
+      this.context.emit('done');
 
-      return await Promise.all([
+      await Promise.all([
         this.worker?.close(),
         this.queueDelegate?.close(),
         this.queueSchd?.close()
-      ]).then(() => {
-        this.state = Status.Closed;
-        this.context.logger.info("歌曲下载队列已关闭");
-        return true;
-      }).catch(() => {
+      ]).catch(() => {
         this.state = oldState;
-        return false;
       });
+
+      if (this.state != Status.Closing) {
+      this.context.logger.debug("歌曲下载队列关闭失败");
+        return false;
+      }
+      this.state = Status.Closed;
+      this.context.logger.debug("歌曲下载队列执行器服务已关闭");
+      this.context.logger.debug("歌曲下载队列调度器服务已关闭");
+      this.context.logger.debug("歌曲下载队列服务已关闭");
+
+      return true;
     }
   }
 }
@@ -243,7 +226,7 @@ class Consumer {
   constructor(queue: SongDownloadQueue) {
     this.queue = queue;
     this.context = new ServerContext(this.queue.context.logger);
-    this.queue.context.on('done', () => this.context.emit('done'));
+    this.queue.context.once('done', () => this.context.emit('done'));
     this.songDownloader = new SongDownloader();
   }
 
@@ -252,15 +235,17 @@ class Consumer {
   // }
 
   async handle(job: BullMQ.Job) {
-    // FIXME: 执行结果总是任务完成，没有错误和失败状态了
     if (this.queue.state != Status.Started) {
       throw new Error('队列已关闭');
     }
-
+    
+    this.context.logger.debug(`任务 ${job.id} 开始执行`, {
+      job: job.data.resolvedSong.song.name
+    });
     const handleContext = new ServerContext(this.context.logger);
-    this.context.on('done', () => handleContext.emit('done'));
+    this.context.once('done', () => handleContext.emit('done'));
 
-    const jobWorker = new Promise<JobResult>(async (resolve, reject) => {
+    const jobWorker = new Promise<JobResult>(async (resolve) => {
       let result = {
         state: DownloadJobStatus.Pending
       } as JobResult;
@@ -274,6 +259,7 @@ class Consumer {
 
         switch (task.state) {
           case SongDownloadTaskStatus.Downloaded:
+          case SongDownloadTaskStatus.Skipped:
             result.state = DownloadJobStatus.Succeed;
             break;
           default:
@@ -290,32 +276,28 @@ class Consumer {
         result.state = DownloadJobStatus.Error;
         result.err = err as Error
       } finally {
-        if (result.state == DownloadJobStatus.Succeed) {
-          resolve(result);
-        } else {
-          if (result.err) {
-            reject(result.err)
-          } else {
-            reject(new Error(job.failedReason))
-          }
-        }
+        resolve(result);
       }
     })
 
     // BullMQ 有时候会 “卡住”，"active" 中的任务不断的刷新锁，但是不执行结束
     // 为了确保其它任务不会饿死，我们需要设置一个超时机制
-    const timeoutTimer = new Promise<JobResult>((resolve, reject) => {
+    const timeoutTimer = new Promise<JobResult>((resolve) => {
       let result = {
-        state: DownloadJobStatus.Cancel
+        state: DownloadJobStatus.Cancel,
       } as JobResult;
 
       let wait = setTimeout(() => {
         handleContext.emit('done');
         clearTimeout(wait);
-        job.failedReason = '执行任务超时';
-        handleContext.logger.warn(`任务 ${job.id} 执行超时`)
+        job.failedReason = '执行超时';
+        handleContext.logger.debug(`任务 ${job.id} 执行超时`, {
+          job: job.data.resolvedSong.song.name
+        });
         resolve(result)
-      }, 60 * 1000/**微秒 */)
+      }, this.queue.getTaskTimeout())
+
+      handleContext.once('done', () => clearTimeout(wait));
     })
 
     let run = Promise.race([
@@ -324,6 +306,13 @@ class Consumer {
     ])
 
     const jobResult = await run;
+    if (jobResult.state != DownloadJobStatus.Succeed) {
+      if (jobResult.err) {
+        throw jobResult.err;
+      } else {
+        throw new Error(job.failedReason)
+      }
+    }
 
     return jobResult.state == DownloadJobStatus.Succeed;
   }
@@ -342,7 +331,7 @@ class Producer {
   constructor(queue: SongDownloadQueue) {
     this.queue = queue;
     this.context = new ServerContext(this.queue.context.logger);
-    this.queue.context.on('done', () => this.context.emit('done'));
+    this.queue.context.once('done', () => this.context.emit('done'));
     this.songResolver = new SongResolver(this.context);
     this.trackResolver = new TrackResolver(this.context);
   }
@@ -382,7 +371,6 @@ class Producer {
     let resolvedSongs = [];
     do {
       resolvedSongs = await chunk.resolve();
-      this.context.logger.info(`offset: ${chunk.query.offset} limit: ${chunk.query.limit}`)
       await this.addResolvedSongs(resolvedSongs)
       chunk = chunk.next();
     }

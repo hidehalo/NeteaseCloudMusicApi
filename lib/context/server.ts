@@ -24,6 +24,10 @@ class ServerContext {
   emit<E extends keyof Events>(event: E, ...args: any[]) {
     return this.delegate.emit(event, ...args);
   }
+
+  once<E extends keyof Events>(event: E, listener: Events[E]) {
+    return this.delegate.once(event, listener);
+  }
 }
 
 export {

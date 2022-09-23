@@ -7,12 +7,12 @@ const cache = require('./util/apicache').middleware
 const { cookieToJson } = require('./util/index')
 const fileUpload = require('express-fileupload')
 const decode = require('safe-decode-uri-component')
-
 import * as Queue from './lib/queue'
 import { StaticIpRequest } from './lib/http'
 import { ServerContext } from './lib/context'
 import { transports, format, createLogger } from 'winston'
 import { fileTrace } from './lib/logger/format'
+require('dotenv').config()
 
 /**
  * The version check result.
@@ -274,18 +274,14 @@ async function consturctServer(moduleDefs) {
   return app
 }
 
-/**
- * Serve the NCM API.
- * @param {NcmApiOptions} options
- * @returns {Promise<import('express').Express & ExpressExtension>}
- */
-async function serveNcmApi(options) {
-  const logger = createLogger({
-    level: 'info',
+function buildLogger() {
+  let logLevel = process.env.LOG_LEVEL ? process.env.LOG_LEVEL : 'debug'
+  return createLogger({
+    level: logLevel,
     transports: [
       new transports.File({
         filename: 'logs/server.log',
-        level: 'info',
+        level: logLevel,
         format: format.combine(
           format.timestamp({ format: 'YYYY-MMM-DD HH:mm:ss' }),
           format.logstash(),
@@ -295,10 +291,17 @@ async function serveNcmApi(options) {
       }),
     ],
   })
+}
 
+/**
+ * Serve the NCM API.
+ * @param {NcmApiOptions} options
+ * @returns {Promise<import('express').Express & ExpressExtension>}
+ */
+async function serveNcmApi(options) {
+  const logger = buildLogger()
   let context = new ServerContext(logger)
-  context.logger.info('服务器启动中...')
-
+  logger.info('服务器启动中...')
   const port = Number(options.port || process.env.PORT || '3000')
   const host = options.host || process.env.HOST || ''
 
@@ -319,31 +322,38 @@ async function serveNcmApi(options) {
     constructServerSubmission,
   ])
 
+  let gracefulShutdownLock = false
+  const gracefulShutdown = () => {
+    if (gracefulShutdownLock) {
+      return
+    }
+    gracefulShutdownLock = true
+    logger.debug('服务开始关闭...')
+    context.emit('done')
+  }
+  process.on('SIGINT', gracefulShutdown)
+  process.on('SIGTERM', gracefulShutdown)
+
+  const dq = new Queue.SongDownloadQueue(context, 'download songs', {
+    concurrency: process.env.QUEUE_WORKER_LIMIT,
+    taskTimeoutMicroTs: process.env.QUEUE_TASK_TIME,
+  })
+  dq.start()
+
+  app.set('downloadQueue', dq)
   app.set('logger', logger)
   app.set('context', context)
-
-  process.once('SIGINT', () => {
-    context.logger.info('服务器开始关闭...')
-    context.emit('done')
-    context.logger.info('服务器已关闭')
-  })
-
-  context.on('done', () => {
-    appExt.server.close(() => {
-      context.logger.info('HTTP 服务已关闭')
-    })
-  })
-
-  const dq = new Queue.SongDownloadQueue(context, 'download songs')
-  dq.init()
-  app.set('downloadQueue', dq)
-  dq.start()
 
   /** @type {import('express').Express & ExpressExtension} */
   const appExt = app
   appExt.server = app.listen(port, host, () => {
     console.log(`server running @ http://${host ? host : 'localhost'}:${port}`)
-    context.logger.info('服务器已开启')
+    context.logger.debug('服务启动成功')
+  })
+  context.once('done', () => {
+    appExt.server.close(() => {
+      logger.debug('HTTP 网络服务已关闭')
+    })
   })
 
   return appExt
