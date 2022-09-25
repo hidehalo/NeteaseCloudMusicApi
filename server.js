@@ -7,12 +7,15 @@ const cache = require('./util/apicache').middleware
 const { cookieToJson } = require('./util/index')
 const fileUpload = require('express-fileupload')
 const decode = require('safe-decode-uri-component')
-import * as Queue from './lib/queue'
+import { SongDownloadQueue } from './lib/queue'
 import { StaticIpRequest } from './lib/http'
 import { ServerContext } from './lib/context'
 import { transports, format, createLogger } from 'winston'
 import { fileTrace } from './lib/logger/format'
 require('dotenv').config()
+const { createBullBoard } = require('@bull-board/api')
+const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter')
+const { ExpressAdapter } = require('@bull-board/express')
 
 /**
  * The version check result.
@@ -146,7 +149,11 @@ async function consturctServer(moduleDefs) {
    * CORS & Preflight request
    */
   app.use((req, res, next) => {
-    if (req.path !== '/' && !req.path.includes('.')) {
+    if (
+      req.path !== '/' &&
+      !req.path.includes('.') &&
+      !req.path.includes('/admin')
+    ) {
       res.set({
         'Access-Control-Allow-Credentials': true,
         'Access-Control-Allow-Origin': req.headers.origin || '*',
@@ -178,6 +185,7 @@ async function consturctServer(moduleDefs) {
    * Body Parser and File Upload
    */
   app.use(express.json())
+
   app.use(express.urlencoded({ extended: false }))
 
   app.use(fileUpload())
@@ -301,7 +309,7 @@ function buildLogger() {
 async function serveNcmApi(options) {
   const logger = buildLogger()
   let context = new ServerContext(logger)
-  logger.info('服务器启动中...')
+  logger.debug('服务器启动中...')
   const port = Number(options.port || process.env.PORT || '3000')
   const host = options.host || process.env.HOST || ''
 
@@ -322,28 +330,62 @@ async function serveNcmApi(options) {
     constructServerSubmission,
   ])
 
+  // Graceful shutdown
   let gracefulShutdownLock = false
-  const gracefulShutdown = () => {
+  const gracefulShutdown = async () => {
     if (gracefulShutdownLock) {
+      console.log('server is closing, please wait a moment!')
       return
     }
+    console.log('server is closing...')
     gracefulShutdownLock = true
-    logger.debug('服务开始关闭...')
-    context.emit('done')
+    const timeoutTimer = new Promise((resolve) => {
+      setTimeout(() => {
+        console.log('server is blocking, try to force quit.')
+        resolve(true)
+      }, 60 * 1e3)
+    })
+    const shutdownProcedure = new Promise((resolve) => {
+      logger.debug('服务开始关闭...')
+      context.emit('done')
+      resolve(true)
+    })
+    await Promise.race([timeoutTimer, shutdownProcedure])
+    process.exit(0)
   }
   process.on('SIGINT', gracefulShutdown)
   process.on('SIGTERM', gracefulShutdown)
+  // process.on('SIGKILL', gracefulShutdown)
 
-  const dq = new Queue.SongDownloadQueue(context, 'download songs', {
+  // Task queue
+  const dq = new SongDownloadQueue(context, 'download songs', {
     concurrency: process.env.QUEUE_WORKER_LIMIT,
     taskTimeoutMicroTs: process.env.QUEUE_TASK_TIME,
   })
   dq.start()
 
+  // Dependency inject
   app.set('downloadQueue', dq)
   app.set('logger', logger)
   app.set('context', context)
 
+  // BullMQ dashboard HTTP Service
+  const serverAdapter = new ExpressAdapter()
+  const basePath = '/admin/queues'
+  serverAdapter.setBasePath(basePath)
+  const queues = [
+    new BullMQAdapter(dq.queueDelegate, {
+      allowRetries: false,
+      readOnlyMode: true,
+    }),
+  ]
+  createBullBoard({
+    queues,
+    serverAdapter,
+  })
+  app.use(basePath, serverAdapter.getRouter())
+
+  // HTTP Service
   /** @type {import('express').Express & ExpressExtension} */
   const appExt = app
   appExt.server = app.listen(port, host, () => {

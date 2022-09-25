@@ -9,7 +9,7 @@ import {
 import { ServerContext } from '../context';
 import os from 'os';
 
-export interface SongDownloadParams {
+interface SongDownloadParams {
   songId: string
   downloadUrl: string
 }
@@ -69,7 +69,7 @@ class SongDownloadQueue {
    */
   constructor(context: ServerContext, queueName: string, params: QueueParams) {
     this.context = new ServerContext(context.logger);
-    context.once('done', () => this.context.emit('done'));
+    context.once('done', async () => await this.close());
     this.queueName = queueName;
     this.params = params;
     this.state = Status.Build;
@@ -126,8 +126,9 @@ class SongDownloadQueue {
 
   private initWorker() {
     if (!this.worker) {
-      // FIXME: 当队列中存在大量任务时，worker 完全不设置屏障的读取了大量的任务进行执行
-      // 这可能会直接耗尽服务器的 socket 资源
+      // WARN: 当队列中存在大量任务时，worker 完全不设置屏障的情况下
+      // 并发读取了大量的任务进行执行，这可能会直接耗尽服务器的 socket 资源
+      // 因此，并发能力请不要设置过大
       this.worker = new BullMQ.Worker(this.queueName, this.consumer.handle.bind(this.consumer), {
         autorun: false,
         concurrency: this.getConcurrency(),
@@ -138,13 +139,15 @@ class SongDownloadQueue {
         }
       });
       this.worker.on('completed', (job: BullMQ.Job, result: any, prev: string) => {
+        job.log(`任务已完成`);
         this.context.logger.debug(`任务 ${job.id} 已完成`, {job: job.data.resolvedSong.song.name});
       });
       this.worker.on('failed', (job: BullMQ.Job, error: Error, prev: string) => {
+        job.log(`任务已失败`);
         this.context.logger.debug(`任务 ${job.id} 已失败，原因是 ${job.failedReason}`, {job: job.data.resolvedSong.song.name});
       });
       this.worker.on('error', (err: Error) => {
-        this.context.logger.error(err.message);
+        this.context.logger.error(`歌曲下载队列执行器错误，原因是 ${err}`);
       });
     }
   }
@@ -180,21 +183,18 @@ class SongDownloadQueue {
     }
 
     this.state = Status.Started;
-    this.context.once('done', async () => {
-      await this.close();
-    })
     await Promise.all(allThreads);
   }
 
   async close() {
     let oldState = this.state;
     if (this.state != Status.Closed && this.state != Status.Closing) {
-      this.context.logger.debug("歌曲下载队列服务开始关闭");
       this.state = Status.Closing;
       this.context.emit('done');
+      this.context.logger.debug("歌曲下载队列服务开始关闭");
 
       await Promise.all([
-        this.worker?.close(),
+        this.worker?.close(true),
         this.queueDelegate?.close(),
         this.queueSchd?.close()
       ]).catch(() => {
@@ -236,15 +236,16 @@ class Consumer {
 
   async handle(job: BullMQ.Job) {
     if (this.queue.state != Status.Started) {
-      throw new Error('队列已关闭');
+      throw new Error('队列已关闭，任务无法调度执行');
     }
-    
+    job.log(`任务开始执行`);
     this.context.logger.debug(`任务 ${job.id} 开始执行`, {
       job: job.data.resolvedSong.song.name
     });
     const handleContext = new ServerContext(this.context.logger);
     this.context.once('done', () => handleContext.emit('done'));
 
+    let jobDone = false;
     const jobWorker = new Promise<JobResult>(async (resolve) => {
       let result = {
         state: DownloadJobStatus.Pending
@@ -254,7 +255,8 @@ class Consumer {
         let jobData = job.data as DownloadSongJobData;
         const task = await this.songDownloader.download(
           handleContext,
-          '/Users/TianChen/Music/NeteaseMusic', 
+          // '/Users/TianChen/Music/NeteaseMusic',
+          '/Users/TianChen/Music/网易云音乐',
           jobData.resolvedSong);
 
         switch (task.state) {
@@ -276,30 +278,35 @@ class Consumer {
         result.state = DownloadJobStatus.Error;
         result.err = err as Error
       } finally {
+        jobDone = true;
         resolve(result);
       }
     })
 
     // BullMQ 有时候会 “卡住”，"active" 中的任务不断的刷新锁，但是不执行结束
     // 为了确保其它任务不会饿死，我们需要设置一个超时机制
-    const timeoutTimer = new Promise<JobResult>((resolve) => {
+    const timeoutTimer = new Promise<JobResult>((resolve, reject) => {
       let result = {
         state: DownloadJobStatus.Cancel,
       } as JobResult;
-
       let wait = setTimeout(() => {
         handleContext.emit('done');
-        clearTimeout(wait);
-        job.failedReason = '执行超时';
-        handleContext.logger.debug(`任务 ${job.id} 执行超时`, {
-          job: job.data.resolvedSong.song.name
-        });
-        resolve(result)
+        // WARN: 不太确定 `jobDone` 会不会幻读 
+        if (!jobDone) {
+          job.failedReason = '执行超时';
+          job.log(`任务执行超时`)
+          handleContext.logger.debug(`任务 ${job.id} 执行超时`, {
+            job: job.data.resolvedSong.song.name
+          });
+          resolve(result)
+        } else {
+          reject('任务已完成，不需要取消');
+        }
       }, this.queue.getTaskTimeout())
-
       handleContext.once('done', () => clearTimeout(wait));
     })
 
+    // WARN: 不太确定 `Promise.race()` 会不会取消另外一个 `Promise`
     let run = Promise.race([
       jobWorker,
       timeoutTimer,
@@ -313,8 +320,9 @@ class Consumer {
         throw new Error(job.failedReason)
       }
     }
+    job.updateProgress(100);
 
-    return jobResult.state == DownloadJobStatus.Succeed;
+    return true;
   }
 }
 
@@ -378,7 +386,8 @@ class Producer {
   }
 }
 
-module.exports = {
-  SongDownloadQueue: SongDownloadQueue,
-  SongDownloadQueueStatus: Status,
+export {
+  SongDownloadQueue,
+  SongDownloadParams,
+  Status as SongDownloadQueueStatus,
 }
