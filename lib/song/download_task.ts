@@ -8,8 +8,6 @@ import { ServerContext } from '../context';
 import fs from 'fs';
 import path from 'path';
 import FileMD5Checksum from 'md5-file';
-import Knex from 'knex';
-import KnexConfig from '../../database/knexfile';
 
 interface HttpEntity {
   method: 'GET'|'POST'
@@ -29,7 +27,7 @@ enum SongDownloadTaskStatus {
 }
 
 interface Tags {
-  apicUrl: string
+  coverUrl: string
   title: string
   albumName: string
   trackNo: string
@@ -63,17 +61,6 @@ const DownloadTaskRunModeText = {
   [DownloadTaskRunMode.Restart]: '重新下载'
 };
 
-interface SongRecord {
-  songId: string,
-  sourceUrl: string,
-  sourceChecksum: string,
-  sourceFileSize: string,
-  targetPath: string,
-  targetChecksum: string, 
-  state: string,
-  createdAt: bigint,
-}
-
 class SongDownloadTask {
 
   context: ServerContext;
@@ -97,7 +84,7 @@ class SongDownloadTask {
     this.totalSize = params.totalSize;
   }
 
-  getTargetDir(): string {
+  private getTargetDir(): string {
     let artisanNames = [];
     for (let i = 0; i < this.resolvedSong.artisans.length; i++) {
       artisanNames.push(this.resolvedSong.artisans[i].name);
@@ -118,7 +105,7 @@ class SongDownloadTask {
     return basename.slice(firstDot, lastDot) + extname;
   }
 
-  getFileName(): string {
+  private getFileName(): string {
     return `${this.resolvedSong.song.name}${this.parseExtension(this.http.url)}`
   }
 
@@ -134,76 +121,33 @@ class SongDownloadTask {
     return `${this.getTargetDir()}/${this.getFileName()}`;
   }
 
-  private targetFileChecksum(): string {
+  getTargetFileChecksum(): string {
     return FileMD5Checksum.sync(this.getTargetPath());
+  }
+
+  getTargetFileSize(): number {
+    const fileStats = fs.statSync(this.getTargetPath());
+    return fileStats.size;
   }
 
   private testChecksum(): boolean {
     if (!this.hasFileExists()) {
       return false;
     }
-    let ck = this.targetFileChecksum();
+    let ck = this.getTargetFileChecksum();
     return this.checksum == ck;
   }
 
-  async run(mode: DownloadTaskRunMode = DownloadTaskRunMode.Restart) {
-    this.context.logger.debug(`下载歌曲『${this.getFileName()}』任务运行在${DownloadTaskRunModeText[mode]}模式`);
-    this.state = SongDownloadTaskStatus.Waiting;
-    let dlOptions = {
-      method: this.http.method,
-      fileName: this.getFileName(),
-      timeout: 300 * 1e3
-    } as DownloaderHelperOptions;
-
-    // TODO: 文件名如果太长需要做处理
-    if (!fs.existsSync(this.getTargetDir())) {
-      fs.mkdirSync(this.getTargetDir(), { recursive: true });
-    }
-
-    if (this.hasFileExists()) {
-      if (this.testChecksum()) {
-        this.state = SongDownloadTaskStatus.Skipped
-        this.context.logger.info(`跳过下载歌曲『${this.resolvedSong.song.name}』`);
-        return
-      }
-      // 1. 相等直接跳过
-      // 2. 不相等，
-      //  尺寸若大于等于传入的尺寸则覆盖
-      //  尺寸若小于传入的尺寸则继续下载
-      // 3. 下载完成后需要校验一次 checksum
-      //  校验成功运行原有逻辑
-      //  校验失败需要重新下载
-      if (mode == DownloadTaskRunMode.Resume) {
-        const fileStats = fs.statSync(this.getTargetPath());
-        if (fileStats.size >= this.totalSize) {
-          // 还是不要直接覆盖的好...有点危险
-          // dlOptions.override = true;
-          dlOptions.override = {
-            skip: true,
-          }
-        } else {
-          dlOptions.removeOnStop = false;
-          dlOptions.removeOnFail = false;
-          dlOptions.resumeIfFileExists = true;
-          dlOptions.resumeOnIncomplete = true;
-          dlOptions.forceResume = true;
-        }
-      } else {
-        dlOptions.override = {
-          skipSmaller: true
-        };
-      }
-    }
-
+  private async startDownload(dlOptions: DownloaderHelperOptions) {
     const dl = new DownloaderHelper(
       this.http.url, 
       this.getTargetDir(),
       dlOptions,
     );
     this.dlState = DH_STATES.IDLE;
-    let cacelContext = new ServerContext(this.context.logger);
+    let cancelContext = new ServerContext(this.context.logger);
     let cancelSignal = new Promise<boolean>((resolve) => {
-      cacelContext.once('done', () => {
+      cancelContext.once('done', () => {
         this.context.logger.debug('下载器无法正确退出，强制释放')
         resolve(true)
       });
@@ -212,7 +156,7 @@ class SongDownloadTask {
     const stopDownload = async () => {
       if (this.dlState != DH_STATES.PAUSED) {
         await dl.pause();
-        cacelContext.emit('done');
+        cancelContext.emit('done');
       }
       // if (this.dlState != DH_STATES.STOPPED && this.hasFileExists()) {
       //   await dl.stop()
@@ -288,9 +232,9 @@ class SongDownloadTask {
         this.err = new Error(message);
         this.context.logger.error(message, {
           sourceUrl: this.http.url,
-          sourcChecksum: this.checksum,
+          sourceChecksum: this.checksum,
           targetPath: this.getTargetPath(),
-          targetChecksum: this.targetFileChecksum(),
+          targetChecksum: this.getTargetFileChecksum(),
         });
       } else {
         this.state = SongDownloadTaskStatus.Downloaded;
@@ -315,10 +259,6 @@ class SongDownloadTask {
           return false;
       });
 
-    const knex = Knex<SongRecord>(KnexConfig.development);
-    // knex.select
-    // TODO: db things
-
     const allThreads = [
       cancelSignal,
       dlThread
@@ -336,6 +276,58 @@ class SongDownloadTask {
       this.context.logger.error(`歌曲『${this.resolvedSong.song.name}』下载失败`);
     }
   }
+
+  async run(mode: DownloadTaskRunMode = DownloadTaskRunMode.Restart) {
+    this.context.logger.debug(`下载歌曲『${this.getFileName()}』任务运行在${DownloadTaskRunModeText[mode]}模式`);
+    this.state = SongDownloadTaskStatus.Waiting;
+    let dlOptions = {
+      method: this.http.method,
+      fileName: this.getFileName(),
+      timeout: 300 * 1e3
+    } as DownloaderHelperOptions;
+
+    // TODO: 文件名如果太长需要做处理
+    if (!fs.existsSync(this.getTargetDir())) {
+      fs.mkdirSync(this.getTargetDir(), { recursive: true });
+    }
+
+    if (this.hasFileExists()) {
+      if (this.testChecksum()) {
+        this.state = SongDownloadTaskStatus.Skipped
+        this.context.logger.info(`跳过下载歌曲『${this.resolvedSong.song.name}』`);
+        return
+      }
+      // 1. 相等直接跳过
+      // 2. 不相等，
+      //  尺寸若大于等于传入的尺寸则覆盖
+      //  尺寸若小于传入的尺寸则继续下载
+      // 3. 下载完成后需要校验一次 checksum
+      //  校验成功运行原有逻辑
+      //  校验失败需要重新下载
+      if (mode == DownloadTaskRunMode.Resume) {
+        dlOptions.removeOnStop = false;
+        dlOptions.removeOnFail = false;
+        const fileStats = fs.statSync(this.getTargetPath());
+        if (fileStats.size >= this.totalSize) {
+          // 还是不要直接覆盖的好...有点危险
+          // dlOptions.override = true;
+          dlOptions.override = {
+            skip: true,
+          }
+        } else {
+          dlOptions.resumeIfFileExists = true;
+          dlOptions.resumeOnIncomplete = true;
+          dlOptions.forceResume = true;
+        }
+      } else {
+        dlOptions.override = {
+          skipSmaller: true
+        };
+      }
+    }
+
+    await this.startDownload(dlOptions);
+  }
 }
 
 export {
@@ -343,5 +335,5 @@ export {
   SongDownloadTask,
   SongDownloadTaskStatus,
   SongDownloadTaskParams,
-  DownloadTaskRunMode
+  DownloadTaskRunMode,
 }

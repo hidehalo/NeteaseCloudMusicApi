@@ -21,6 +21,7 @@ interface Song {
   ar: Artisan[]
   al: Album
   dt: Duration
+  no: number
 }
 
 class ResolvedSong {

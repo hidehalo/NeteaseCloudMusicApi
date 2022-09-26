@@ -9,8 +9,15 @@ import {
   SongDownloadTaskStatus,
   DownloadTaskRunMode,
 } from './download_task';
+import { SongRepository, SongRecord } from './storage';
 
 class SongDownloader {
+
+  private songRepo: SongRepository;
+
+  constructor() {
+    this.songRepo = new SongRepository();
+  }
 
   async download(context: ServerContext, rootPath: string, resolvedSong: ResolvedSong) {
     const request = new StaticIpRequest(context, resolvedSong.query.ip);
@@ -42,6 +49,22 @@ class SongDownloader {
       totalSize
     })
 
+    // TODO: batch insert
+    let songRecord = {
+      songId: Number(resolvedSong.song.id).toFixed(0),
+      songName: resolvedSong.song.name,
+      coverUrl: resolvedSong.album.picUrl,
+      trackNumber: resolvedSong.song.no,
+      albumName: resolvedSong.album.name,
+      artistsName: resolvedSong.artisans.flatMap((artisan) => artisan.name).join(','),
+      sourceUrl: http.url,
+      sourceChecksum: checksum,
+      sourceFileSize: totalSize,
+      targetPath: task.getTargetPath(),
+      targetChecksum: task.getTargetFileChecksum(),
+      targetFileSize: task.getTargetFileSize()
+    } as SongRecord;
+
     if (!http.url) {
       let errMsg = `歌曲『${resolvedSong.song.name}』无法解析下载地址`;
       context.logger.error(errMsg, {
@@ -50,14 +73,20 @@ class SongDownloader {
       });
       task.state = SongDownloadTaskStatus.Error;
       task.err = new Error(errMsg);
+      songRecord.state = task.getStateDescription();
+      songRecord.stateDesc = '无法解析下载地址';
+      await this.songRepo.upsert(songRecord);
       return task;
     }
 
-    if (!checksum) {
-      console.log(downloadResp.body.data);
-    }
-
     await task.run(DownloadTaskRunMode.Resume);
+    songRecord.state = task.getStateDescription();
+    if (task.err) {
+      songRecord.stateDesc = task.err.message;
+    } else {
+      songRecord.stateDesc = task.getStateDescription();
+    }
+    await this.songRepo.upsert(songRecord);
     return task;
   }
 }

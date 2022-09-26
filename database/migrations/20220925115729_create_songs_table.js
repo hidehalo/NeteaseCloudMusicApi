@@ -4,16 +4,22 @@
  */
 exports.up = function (knex) {
   return knex.schema.createTableIfNotExists('songs', (table) => {
-    table.increments()
-    table.string('songId')
+    table.string('songId', 64)
+    table.string('songName')
+    table.string('coverUrl')
+    table.string('trackNumber', 11)
+    table.string('albumName')
+    table.text('artistsName')
     table.string('sourceUrl')
-    table.string('sourceChecksum')
+    table.text('sourceChecksum')
     table.bigint('sourceFileSize')
     table.string('targetPath')
-    table.string('targetChecksum')
+    table.text('targetChecksum')
     table.bigint('targetFileSize')
     table.string('state')
+    table.text('stateDesc')
     table.timestamp('createdAt').defaultTo(knex.fn.now())
+    table.primary('songId')
   })
 }
 
