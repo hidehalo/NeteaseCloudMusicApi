@@ -57,10 +57,10 @@ class SongDownloader {
       trackNumber: resolvedSong.song.no,
       albumName: resolvedSong.album.name,
       artistsName: resolvedSong.artisans.flatMap((artisan) => artisan.name).join(','),
-      sourceUrl: http.url,
+      sourceUrl: http.url? http.url: '',
       sourceChecksum: checksum,
       sourceFileSize: totalSize,
-      targetPath: task.getTargetPath(),
+      targetPath: http.url? task.getTargetPath(): '',
       targetChecksum: task.getTargetFileChecksum(true),
       targetFileSize: task.getTargetFileSize()
     } as SongRecord;
