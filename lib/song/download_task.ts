@@ -72,6 +72,7 @@ class SongDownloadTask {
   err?: Error;
   checksum: string;
   totalSize: number;
+  targetFileChecksumCache?: string;
 
   constructor(context: ServerContext, params: SongDownloadTaskParams) {
     this.context = context;
@@ -121,8 +122,12 @@ class SongDownloadTask {
     return `${this.getTargetDir()}/${this.getFileName()}`;
   }
 
-  getTargetFileChecksum(): string {
-    return FileMD5Checksum.sync(this.getTargetPath());
+  getTargetFileChecksum(fromCache: boolean = false): string {
+    if (fromCache) {
+      return this.targetFileChecksumCache? this.targetFileChecksumCache: '';
+    }
+    this.targetFileChecksumCache = FileMD5Checksum.sync(this.getTargetPath());
+    return this.targetFileChecksumCache;
   }
 
   getTargetFileSize(): number {
@@ -234,7 +239,7 @@ class SongDownloadTask {
           sourceUrl: this.http.url,
           sourceChecksum: this.checksum,
           targetPath: this.getTargetPath(),
-          targetChecksum: this.getTargetFileChecksum(),
+          targetChecksum: this.getTargetFileChecksum(true),
         });
       } else {
         this.state = SongDownloadTaskStatus.Downloaded;

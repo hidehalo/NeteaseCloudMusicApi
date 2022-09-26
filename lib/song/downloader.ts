@@ -61,7 +61,7 @@ class SongDownloader {
       sourceChecksum: checksum,
       sourceFileSize: totalSize,
       targetPath: task.getTargetPath(),
-      targetChecksum: task.getTargetFileChecksum(),
+      targetChecksum: task.getTargetFileChecksum(true),
       targetFileSize: task.getTargetFileSize()
     } as SongRecord;
 

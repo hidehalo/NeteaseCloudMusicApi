@@ -120,6 +120,7 @@ class SongDownloadQueue {
       this.queueSchd = new BullMQ.QueueScheduler(this.queueName, {
         connection: this.getRedisConnConfig(),
         autorun: false,
+        maxStalledCount: 0,
       });
     }
   }
