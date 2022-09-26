@@ -7,7 +7,7 @@ exports.up = function (knex) {
     table.string('songId', 64)
     table.string('songName')
     table.string('coverUrl')
-    table.string('trackNumber', 11)
+    table.integer('trackNumber')
     table.string('albumName')
     table.text('artistsName')
     table.string('sourceUrl')
