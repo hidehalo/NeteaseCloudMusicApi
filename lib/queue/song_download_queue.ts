@@ -171,7 +171,7 @@ class SongDownloadQueue {
     return this.params.taskTimeoutMicroTs? this.params.taskTimeoutMicroTs: 3e4;
   }
   
-  async start() {
+  async start(): Promise<void> {
     if (this.state == Status.Build) {
       this.init();
     } else if (this.state != Status.Initiated) {
@@ -197,7 +197,7 @@ class SongDownloadQueue {
     await Promise.all(allThreads);
   }
 
-  async close() {
+  async close(): Promise<boolean|undefined> {
     let oldState = this.state;
     if (this.state != Status.Closed && this.state != Status.Closing) {
       this.state = Status.Closing;
@@ -245,7 +245,7 @@ class Consumer {
   //   return `${this.queue.queueName}.download.${songId}`;
   // }
 
-  async handle(job: BullMQ.Job) {
+  async handle(job: BullMQ.Job): Promise<boolean> {
     if (this.queue.state != Status.Started) {
       throw new Error('队列已关闭，任务无法调度执行');
     }
@@ -369,7 +369,7 @@ class Producer {
     await this.queue.queueDelegate?.addBulk(jobsBatch);
   }
 
-  async downloadSong(query: SongQuery) {
+  async downloadSong(query: SongQuery): Promise<void> {
     let batchQuery = {
       ip: query.ip,
       ids: [query.id],
@@ -378,12 +378,12 @@ class Producer {
     await this.downloadSongs(batchQuery);
   }
 
-  async downloadSongs(query: BatchSongQuery) {
+  async downloadSongs(query: BatchSongQuery): Promise<void> {
     let resolvedSongs = await this.songResolver.resolveBatch(query);
     await this.addResolvedSongs(resolvedSongs);
   }
 
-  async downloadTrack(query: TrackQuery) {
+  async downloadTrack(query: TrackQuery): Promise<void> {
     // let resolvedSongs = await this.trackResolver.resolve(query);
     let chunk = this.trackResolver.chunk(query);
     let runLoop = true;

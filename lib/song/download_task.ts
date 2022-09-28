@@ -143,7 +143,7 @@ class SongDownloadTask {
     return this.checksum == ck;
   }
 
-  private async startDownload(dlOptions: DownloaderHelperOptions) {
+  private async startDownload(dlOptions: DownloaderHelperOptions): Promise<void> {
     const dl = new DownloaderHelper(
       this.http.url, 
       this.getTargetDir(),
@@ -158,7 +158,7 @@ class SongDownloadTask {
       });
     });
 
-    const stopDownload = async () => {
+    const stopDownload = async (): Promise<void> => {
       if (this.dlState != DH_STATES.PAUSED) {
         await dl.pause();
         cancelContext.emit('done');
@@ -282,7 +282,7 @@ class SongDownloadTask {
     }
   }
 
-  async run(mode: DownloadTaskRunMode = DownloadTaskRunMode.Restart) {
+  async run(mode: DownloadTaskRunMode = DownloadTaskRunMode.Restart): Promise<void> {
     this.context.logger.debug(`下载歌曲『${this.getFileName()}』任务运行在${DownloadTaskRunModeText[mode]}模式`);
     this.state = SongDownloadTaskStatus.Waiting;
     let dlOptions = {

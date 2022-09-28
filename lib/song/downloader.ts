@@ -20,7 +20,7 @@ class SongDownloader {
     this.songRepo = new SongRepository();
   }
 
-  async download(context: ServerContext, rootPath: string, resolvedSong: ResolvedSong) {
+  async download(context: ServerContext, rootPath: string, resolvedSong: ResolvedSong): Promise<SongDownloadTask> {
     const request = new StaticIpRequest(context, resolvedSong.query.ip);
     const http = {
       method: 'GET',
