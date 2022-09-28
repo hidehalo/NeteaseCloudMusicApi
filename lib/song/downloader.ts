@@ -10,6 +10,7 @@ import {
   DownloadTaskRunMode,
 } from './download_task';
 import { SongRepository, SongRecord } from './storage';
+import fs from 'fs';
 
 class SongDownloader {
 
@@ -25,6 +26,20 @@ class SongDownloader {
       method: 'GET',
       cookie: resolvedSong.query.cookie
     } as HttpEntity
+    const persistedSong = await this.songRepo.findBySongId(Number(resolvedSong.song.id).toFixed(0));
+    if (fs.existsSync(persistedSong?.targetPath) &&
+      persistedSong.sourceChecksum == persistedSong.targetChecksum) {
+        let dumpTask = new SongDownloadTask(context, {
+          http,
+          rootPath,
+          resolvedSong,
+          checksum: persistedSong.targetChecksum,
+          totalSize: persistedSong.targetFileSize,
+        });
+        dumpTask.state = SongDownloadTaskStatus.Skipped;
+        context.logger.info(`快速跳过下载歌曲『${resolvedSong.song.name}』`);
+        return dumpTask;
+    }
     let downloadResp = await getDownloadUrl(resolvedSong.query, request.send.bind(request));
     http.url = downloadResp.body.data.url;
     let checksum = downloadResp.body.data.md5;
@@ -60,9 +75,6 @@ class SongDownloader {
       sourceUrl: http.url? http.url: '',
       sourceChecksum: checksum,
       sourceFileSize: totalSize,
-      targetPath: http.url? task.getTargetPath(): '',
-      targetChecksum: task.getTargetFileChecksum(true),
-      targetFileSize: task.getTargetFileSize()
     } as SongRecord;
 
     if (!http.url) {
@@ -81,6 +93,11 @@ class SongDownloader {
 
     await task.run(DownloadTaskRunMode.Resume);
     songRecord.state = task.getStateDescription();
+    if (task.hasFileExists()) {
+      songRecord.targetPath = task.getTargetPath();
+      songRecord.targetChecksum = task.getTargetFileChecksum(true);
+      songRecord.targetFileSize = task.getTargetFileSize();
+    }
     if (task.err) {
       songRecord.stateDesc = task.err.message;
     } else {

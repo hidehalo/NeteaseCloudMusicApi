@@ -37,8 +37,8 @@ class SongRepository
     return SongRepository.store.table('songs');
   }
 
-  async findBySongId(songId: string, fields: string[]): Promise<SongRecord> {
-    return await this.createQueryBuilder().where('songId', songId).first(songId);
+  async findBySongId(songId: string, fields: string[] = ['*']): Promise<SongRecord> {
+    return await this.createQueryBuilder().where('songId', songId).first(fields);
   }
 
   // TODO: paginate & get

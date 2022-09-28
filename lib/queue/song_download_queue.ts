@@ -137,7 +137,8 @@ class SongDownloadQueue {
         limiter: {
           max: this.getConcurrency(),
           duration: 1e3
-        }
+        },
+        lockDuration: this.getTaskTimeout() * 1.25,
       });
       this.worker.on('completed', (job: BullMQ.Job, result: any, prev: string) => {
         job.log(`任务已完成`);

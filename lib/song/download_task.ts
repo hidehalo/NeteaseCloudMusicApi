@@ -76,10 +76,10 @@ class SongDownloadTask {
 
   constructor(context: ServerContext, params: SongDownloadTaskParams) {
     this.context = context;
-    this.rootDir = params.rootPath;
-    this.http = params.http;
     this.state = SongDownloadTaskStatus.Waiting;
     this.dlState = DH_STATES.IDLE;
+    this.http = params.http;
+    this.rootDir = params.rootPath;
     this.resolvedSong = params.resolvedSong;
     this.checksum = params.checksum;
     this.totalSize = params.totalSize;
@@ -269,7 +269,7 @@ class SongDownloadTask {
       dlThread
     ];
 
-    await Promise.all(allThreads);
+    await Promise.race(allThreads);
 
     let dlStats = dl.getStats();
     if (dlStats.downloaded != dlStats.total || 
