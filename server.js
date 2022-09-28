@@ -358,7 +358,7 @@ async function serveNcmApi(options) {
   // process.on('SIGKILL', gracefulShutdown)
 
   // Task queue
-  const dq = new SongDownloadQueue(context, 'download songs', {
+  const dq = new SongDownloadQueue(context, process.env.DOWNLOAD_DIR, {
     concurrency: process.env.QUEUE_WORKER_LIMIT,
     taskTimeoutMicroTs: process.env.QUEUE_TASK_TIME,
   })

@@ -48,6 +48,8 @@ class SongDownloadQueue {
 
   context: ServerContext;
 
+  rootDir: string;
+
   queueName: string;
 
   state: Status;
@@ -64,13 +66,11 @@ class SongDownloadQueue {
 
   params: QueueParams;
 
-  /**
-   * @param {string} queueName - 队列名称
-   */
-  constructor(context: ServerContext, queueName: string, params: QueueParams) {
+  constructor(context: ServerContext, downloadDir: string, params: QueueParams) {
     this.context = new ServerContext(context.logger);
     context.once('done', async () => await this.close());
-    this.queueName = queueName;
+    this.rootDir = downloadDir;
+    this.queueName = downloadDir.replace(/\//g, '.').replace('.', '');
     this.params = params;
     this.state = Status.Build;
     this.consumer = new Consumer(this);
@@ -113,6 +113,9 @@ class SongDownloadQueue {
         },
       },
     });
+    this.queueDelegate.on('error', (err) => {
+      this.context.logger.error(`歌曲下载队列运行错误：${err?.message}`, {err});
+    });
   }
 
   private initScheduler() {
@@ -121,6 +124,9 @@ class SongDownloadQueue {
         connection: this.getRedisConnConfig(),
         autorun: false,
         maxStalledCount: 0,
+      });
+      this.queueSchd.on('stalled', (jobId, prev) => {
+        this.context.logger.error(`歌曲下载队列调度器停滞错误`, {jobId, prev});
       });
     }
   }
@@ -139,6 +145,9 @@ class SongDownloadQueue {
           duration: 1e3
         },
         lockDuration: this.getTaskTimeout() * 1.25,
+        metrics: {
+          maxDataPoints: BullMQ.MetricsTime.ONE_WEEK * 2,
+        },
       });
       this.worker.on('completed', (job: BullMQ.Job, result: any, prev: string) => {
         job.log(`任务已完成`);
@@ -257,8 +266,7 @@ class Consumer {
         let jobData = job.data as DownloadSongJobData;
         const task = await this.songDownloader.download(
           handleContext,
-          // '/Users/TianChen/Music/NeteaseMusic',
-          '/Users/TianChen/Music/网易云音乐',
+          this.queue.rootDir,
           jobData.resolvedSong);
 
         switch (task.state) {
@@ -378,13 +386,41 @@ class Producer {
   async downloadTrack(query: TrackQuery) {
     // let resolvedSongs = await this.trackResolver.resolve(query);
     let chunk = this.trackResolver.chunk(query);
-    let resolvedSongs = [];
-    do {
-      resolvedSongs = await chunk.resolve();
-      await this.addResolvedSongs(resolvedSongs)
-      chunk = chunk.next();
+    let runLoop = true;
+    let count = 0;
+    let startMicroTs = new Date().getMilliseconds();
+    const concurrency = os.cpus().length;
+    try {
+      do {
+        let resolveSongThreads = [];
+        for (let i = 0; i < concurrency; i++) {
+          resolveSongThreads.push(chunk.resolve());
+          chunk = chunk.next();
+        }
+        let resolvedSongsArr = await Promise.all(resolveSongThreads);
+        let addJobThreads = [];
+        for (let i = 0; i < resolvedSongsArr.length; i++) {
+          if (resolvedSongsArr[i].length > 0) {
+            count += resolvedSongsArr[i].length;
+            addJobThreads.push(this.addResolvedSongs(resolvedSongsArr[i]));
+          }
+        }
+        if (addJobThreads.length == 0) {
+          runLoop = false;
+          break;
+        }
+        await Promise.all(addJobThreads);
+      }
+      while (runLoop);
+    } catch (err) {
+      let e = err as Error;
+      this.context.logger.error(`下载歌单『${query.id}』任务添加失败，原因是：${e.message}`, {err})
     }
-    while (resolvedSongs.length > 0);
+    if (!runLoop) {
+      // FIXME: `(endMicroTs-startMicroTs)*1e-3` is buggy
+      let endMicroTs = new Date().getMilliseconds();
+      this.context.logger.debug(`下载歌单『${query.id}』任务添加成功，下载队列新增 ${count} 首歌曲，共计耗时 ${(endMicroTs-startMicroTs)*1e-3} 秒`)
+    }
   }
 }
 
