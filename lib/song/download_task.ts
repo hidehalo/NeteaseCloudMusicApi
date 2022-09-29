@@ -8,12 +8,15 @@ import { ServerContext } from '../context';
 import fs from 'fs';
 import path from 'path';
 import FileMD5Checksum from 'md5-file';
+import process from 'process';
 
 interface HttpEntity {
-  method: 'GET'|'POST'
+  method: 'GET'
   url: string
   headers?: object
   cookie: object
+  checksum: string
+  totalSize: number
 }
 
 enum SongDownloadTaskStatus {
@@ -37,8 +40,6 @@ interface SongDownloadTaskParams {
   rootPath: string
   http: HttpEntity
   resolvedSong: ResolvedSong
-  checksum: string
-  totalSize: number
 }
 
 const StatusDescription = {
@@ -81,16 +82,20 @@ class SongDownloadTask {
     this.http = params.http;
     this.rootDir = params.rootPath;
     this.resolvedSong = params.resolvedSong;
-    this.checksum = params.checksum;
-    this.totalSize = params.totalSize;
+    this.checksum = params.http.checksum;
+    this.totalSize = params.http.totalSize;
   }
 
   private getTargetDir(): string {
     let artisanNames = [];
-    for (let i = 0; i < this.resolvedSong.artisans.length; i++) {
+    for (let i = 0; i < 1; i++) {
       artisanNames.push(this.resolvedSong.artisans[i].name);
     }
-    return `${this.rootDir}/${artisanNames.join(',').replace(/\//g, "\\/")}/${this.resolvedSong.album.name.replace(/\//g, "\\/")}`;
+    let dirBaseArtisan = artisanNames.join(',').replace(/\//g, "\\/");
+    dirBaseArtisan = dirBaseArtisan? dirBaseArtisan: '未知艺术家';
+    let dirBaseAlbum = this.resolvedSong.album.name.replace(/\//g, "\\/");
+    dirBaseAlbum = dirBaseAlbum? dirBaseAlbum: '未知专辑';
+    return `${this.rootDir}/${dirBaseArtisan}/${dirBaseAlbum}`;
   }
 
   private parseExtension(url: string): string {
@@ -144,6 +149,8 @@ class SongDownloadTask {
   }
 
   private async startDownload(dlOptions: DownloaderHelperOptions): Promise<void> {
+    let startNanoTs = process.hrtime.bigint();
+    let speedMax = 0;
     const dl = new DownloaderHelper(
       this.http.url, 
       this.getTargetDir(),
@@ -152,22 +159,21 @@ class SongDownloadTask {
     this.dlState = DH_STATES.IDLE;
     let cancelContext = new ServerContext(this.context.logger);
     let cancelSignal = new Promise<boolean>((resolve) => {
-      cancelContext.once('done', () => {
-        this.context.logger.debug('下载器无法正确退出，强制释放')
-        resolve(true)
-      });
+      cancelContext.once('done', () => resolve(true));
     });
 
     const stopDownload = async (): Promise<void> => {
-      if (this.dlState != DH_STATES.PAUSED) {
-        await dl.pause();
+      if (this.dlState == DH_STATES.DOWNLOADING ||
+          this.dlState == DH_STATES.PAUSED ||
+          this.dlState == DH_STATES.RESUMED ||
+          this.dlState == DH_STATES.RETRY ||
+          this.dlState == DH_STATES.SKIPPED ||
+          this.dlState == DH_STATES.STARTED
+        ) {
+        await dl.stop();
+        dl.removeAllListeners();
         cancelContext.emit('done');
       }
-      // if (this.dlState != DH_STATES.STOPPED && this.hasFileExists()) {
-      //   await dl.stop()
-      // }
-      // else {
-      // }
     };
 
     this.context.once('done', async () => {
@@ -177,6 +183,12 @@ class SongDownloadTask {
         await stopDownload();
       }
     })
+
+    dl.on('progress', (stats) => {
+      if (stats.speed > speedMax) {
+        speedMax = stats.speed;
+      }
+    });
 
     dl.on('stateChanged', (state) => {
       this.context.logger.debug(`下载器状态由 ${this.dlState} 变更为 ${state}`);
@@ -196,7 +208,7 @@ class SongDownloadTask {
       this.context.logger.debug(`暂停下载歌曲『${this.resolvedSong.song.name}』`);
     });
 
-    dl.on('renamed', (stats) => {
+    dl.once('renamed', (stats) => {
       this.context.logger.debug(`歌曲『${this.resolvedSong.song.name}』被重命名为 ${stats.fileName}`);
     });
 
@@ -205,6 +217,7 @@ class SongDownloadTask {
     });
 
     dl.once('timeout', () => {
+      cancelContext.emit('done');
       this.state = SongDownloadTaskStatus.Timeout;
       this.context.logger.debug(`歌曲『${this.resolvedSong.song.name}』下载超时`, {
         url: this.http.url
@@ -217,20 +230,22 @@ class SongDownloadTask {
     })
 
     dl.once('skip', (stats) => {
+      cancelContext.emit('done');
       this.state = SongDownloadTaskStatus.Skipped;
       this.context.logger.info(`跳过下载歌曲『${this.resolvedSong.song.name}』`);
     });
 
     dl.once('stop', async () => {
-      this.context.logger.debug(`检测到中止信号，提前结束下载并删除歌曲『${this.resolvedSong.song.name}』`, {
+      cancelContext.emit('done');
+      this.context.logger.debug(`检测到中止信号，结束下载歌曲『${this.resolvedSong.song.name}』`, {
         path: this.getTargetPath(),
         desc: this.getStateDescription(),
         error: this.err,
       });
-      await stopDownload();
     });
 
     dl.once('end', (stats) => {
+      cancelContext.emit('done');
       if (!this.testChecksum()) {
         let message = `歌曲『${this.resolvedSong.song.name}』文件校验失败`;
         this.state = SongDownloadTaskStatus.Error;
@@ -242,34 +257,45 @@ class SongDownloadTask {
           targetChecksum: this.getTargetFileChecksum(true),
         });
       } else {
+        let endNanoTs = process.hrtime.bigint();
+        let duration = endNanoTs - startNanoTs;
         this.state = SongDownloadTaskStatus.Downloaded;
         this.context.logger.info(`歌曲『${this.resolvedSong.song.name}』下载完成`, {
-          path: this.getTargetPath()
+          path: this.getTargetPath(),
+          duration: `${Number(duration.toString()) * 1e-9} S`,
+          speedMax: `${speedMax*1e-6} MB/S`,
+          speedAvg: `${dl.getStats().downloaded*1e3/Number(duration.toString())} MB/S`
         });
       }
     })
 
-    dl.on('error', async (err) => {
+    dl.once('error', async (err) => {
       this.err = new Error(err.message);
       this.state = SongDownloadTaskStatus.Error;
       await stopDownload();
     });
 
-    const dlThread = dl.start()
-      .catch(
-        async (reason) => {
-          this.state = SongDownloadTaskStatus.Error;
-          this.err = new Error(reason);
-          await stopDownload();
-          return false;
-      });
+    try {
+      const dlThread = dl.start()
+        .catch(
+          async (reason) => {
+            this.state = SongDownloadTaskStatus.Error;
+            this.err = new Error(reason);
+            await stopDownload();
+            return false;
+        }).finally(() => cancelContext.emit('done'));
 
-    const allThreads = [
-      cancelSignal,
-      dlThread
-    ];
+      const allThreads = [
+        cancelSignal,
+        dlThread
+      ];
 
-    await Promise.race(allThreads);
+      await Promise.race(allThreads).finally(() => cancelContext.emit('done'));
+    } catch (e) {
+      this.state = SongDownloadTaskStatus.Error;
+      this.err = e as Error;
+      await stopDownload();
+    }
 
     let dlStats = dl.getStats();
     if (dlStats.downloaded != dlStats.total || 
@@ -288,10 +314,14 @@ class SongDownloadTask {
     let dlOptions = {
       method: this.http.method,
       fileName: this.getFileName(),
-      timeout: 300 * 1e3
+      timeout: 300 * 1e3,
+      retry: {
+        maxRetries: 3,
+        delay: 100,
+      },
+      progressThrottle: 5e3,
     } as DownloaderHelperOptions;
 
-    // TODO: 文件名如果太长需要做处理
     if (!fs.existsSync(this.getTargetDir())) {
       fs.mkdirSync(this.getTargetDir(), { recursive: true });
     }
@@ -322,7 +352,6 @@ class SongDownloadTask {
         } else {
           dlOptions.resumeIfFileExists = true;
           dlOptions.resumeOnIncomplete = true;
-          dlOptions.forceResume = true;
         }
       } else {
         dlOptions.override = {

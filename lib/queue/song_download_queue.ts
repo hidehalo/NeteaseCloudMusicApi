@@ -8,6 +8,7 @@ import {
 } from '../song';
 import { ServerContext } from '../context';
 import os from 'os';
+import process from 'process';
 
 interface SongDownloadParams {
   songId: string
@@ -320,7 +321,7 @@ class Consumer {
     let run = Promise.race([
       jobWorker,
       timeoutTimer,
-    ])
+    ]).finally(() => handleContext.emit('done'));
 
     const jobResult = await run;
     if (jobResult.state != DownloadJobStatus.Succeed) {
@@ -388,7 +389,7 @@ class Producer {
     let chunk = this.trackResolver.chunk(query);
     let runLoop = true;
     let count = 0;
-    let startMicroTs = new Date().getMilliseconds();
+    let startNanoTs = process.hrtime.bigint();
     const concurrency = os.cpus().length;
     try {
       do {
@@ -417,9 +418,9 @@ class Producer {
       this.context.logger.error(`下载歌单『${query.id}』任务添加失败，原因是：${e.message}`, {err})
     }
     if (!runLoop) {
-      // FIXME: `(endMicroTs-startMicroTs)*1e-3` is buggy
-      let endMicroTs = new Date().getMilliseconds();
-      this.context.logger.info(`下载歌单『${query.id}』任务添加成功，下载队列新增 ${count} 首歌曲，共计耗时 ${(endMicroTs-startMicroTs)*1e-3} 秒`)
+      let endNanoTs = process.hrtime.bigint();
+      let duration = endNanoTs - startNanoTs;
+      this.context.logger.info(`下载歌单『${query.id}』任务添加成功，下载队列新增 ${count} 首歌曲，共计耗时 ${1e-9 * Number(duration.toString())} 秒`);
     }
   }
 }
