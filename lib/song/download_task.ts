@@ -164,14 +164,12 @@ class SongDownloadTask {
 
     const stopDownload = async (): Promise<void> => {
       if (this.dlState == DH_STATES.DOWNLOADING ||
-          this.dlState == DH_STATES.PAUSED ||
-          this.dlState == DH_STATES.RESUMED ||
           this.dlState == DH_STATES.RETRY ||
+          this.dlState == DH_STATES.RESUMED ||
           this.dlState == DH_STATES.SKIPPED ||
           this.dlState == DH_STATES.STARTED
         ) {
-        await dl.stop();
-        dl.removeAllListeners();
+        await dl.pause();
         cancelContext.emit('done');
       }
     };
@@ -290,7 +288,9 @@ class SongDownloadTask {
         dlThread
       ];
 
-      await Promise.race(allThreads).finally(() => cancelContext.emit('done'));
+      await Promise.race(allThreads)
+        .catch((reason) => {throw new Error(reason);})
+        .finally(() => cancelContext.emit('done'));
     } catch (e) {
       this.state = SongDownloadTaskStatus.Error;
       this.err = e as Error;

@@ -321,7 +321,9 @@ class Consumer {
     let run = Promise.race([
       jobWorker,
       timeoutTimer,
-    ]).finally(() => handleContext.emit('done'));
+    ])
+    .catch((reason) => {throw new Error(reason)})
+    .finally(() => handleContext.emit('done'));
 
     const jobResult = await run;
     if (jobResult.state != DownloadJobStatus.Succeed) {
@@ -398,7 +400,7 @@ class Producer {
           resolveSongThreads.push(chunk.resolve());
           chunk = chunk.next();
         }
-        let resolvedSongsArr = await Promise.all(resolveSongThreads);
+        let resolvedSongsArr = await Promise.all(resolveSongThreads).catch(() => []);
         let addJobThreads = [];
         for (let i = 0; i < resolvedSongsArr.length; i++) {
           if (resolvedSongsArr[i].length > 0) {
@@ -410,7 +412,7 @@ class Producer {
           runLoop = false;
           break;
         }
-        await Promise.all(addJobThreads);
+        await Promise.all(addJobThreads).catch((reason) => {throw new Error(reason)});
       }
       while (runLoop);
     } catch (err) {
