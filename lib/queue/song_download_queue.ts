@@ -419,7 +419,7 @@ class Producer {
     if (!runLoop) {
       // FIXME: `(endMicroTs-startMicroTs)*1e-3` is buggy
       let endMicroTs = new Date().getMilliseconds();
-      this.context.logger.debug(`下载歌单『${query.id}』任务添加成功，下载队列新增 ${count} 首歌曲，共计耗时 ${(endMicroTs-startMicroTs)*1e-3} 秒`)
+      this.context.logger.info(`下载歌单『${query.id}』任务添加成功，下载队列新增 ${count} 首歌曲，共计耗时 ${(endMicroTs-startMicroTs)*1e-3} 秒`)
     }
   }
 }

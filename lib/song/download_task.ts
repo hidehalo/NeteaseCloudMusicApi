@@ -90,7 +90,7 @@ class SongDownloadTask {
     for (let i = 0; i < this.resolvedSong.artisans.length; i++) {
       artisanNames.push(this.resolvedSong.artisans[i].name);
     }
-    return `${this.rootDir}/${artisanNames.join(',')}/${this.resolvedSong.album.name}`;
+    return `${this.rootDir}/${artisanNames.join(',').replace(/\//g, "\\/")}/${this.resolvedSong.album.name.replace(/\//g, "\\/")}`;
   }
 
   private parseExtension(url: string): string {
