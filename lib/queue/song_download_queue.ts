@@ -322,7 +322,17 @@ class Consumer {
       jobWorker,
       timeoutTimer,
     ])
-    .catch((reason) => {throw new Error(reason)})
+    .catch((reason) => {
+      this.context.logger.error(`任务 ${job.id} 执行错误`, {reason});
+      if (reason) {
+        job.log(`执行错误，原因是：${reason}`);
+        job.failedReason = reason;
+      }
+      return {
+        state: DownloadJobStatus.Error,
+        err: new Error(reason)
+      } as JobResult;
+    })
     .finally(() => handleContext.emit('done'));
 
     const jobResult = await run;
@@ -412,7 +422,10 @@ class Producer {
           runLoop = false;
           break;
         }
-        await Promise.all(addJobThreads).catch((reason) => {throw new Error(reason)});
+        await Promise.all(addJobThreads)
+        .catch((reason) => {
+          this.context.logger.error(`下载歌单『${query.id}』入队失败`, {reason, resolvedSongsArr});
+        });
       }
       while (runLoop);
     } catch (err) {

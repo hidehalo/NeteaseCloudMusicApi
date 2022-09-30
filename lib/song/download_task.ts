@@ -91,9 +91,9 @@ class SongDownloadTask {
     for (let i = 0; i < 1; i++) {
       artisanNames.push(this.resolvedSong.artisans[i].name);
     }
-    let dirBaseArtisan = artisanNames.join(',').replace(/\//g, "\\/");
+    let dirBaseArtisan = artisanNames.join(',').replace(/\//g, ':');
     dirBaseArtisan = dirBaseArtisan? dirBaseArtisan: '未知艺术家';
-    let dirBaseAlbum = this.resolvedSong.album.name.replace(/\//g, "\\/");
+    let dirBaseAlbum = this.resolvedSong.album.name.replace(/\//g, ':');
     dirBaseAlbum = dirBaseAlbum? dirBaseAlbum: '未知专辑';
     return `${this.rootDir}/${dirBaseArtisan}/${dirBaseAlbum}`;
   }
@@ -112,7 +112,7 @@ class SongDownloadTask {
   }
 
   private getFileName(): string {
-    return `${this.resolvedSong.song.name}${this.parseExtension(this.http.url)}`
+    return `${this.resolvedSong.song.name}${this.parseExtension(this.http.url)}`.replace(/\//g, ':');
   }
 
   hasFileExists(): boolean {
@@ -178,8 +178,8 @@ class SongDownloadTask {
       const stats = dl.getStats();
       if (stats.downloaded < stats.total) {
         this.state = SongDownloadTaskStatus.Cancel;
-        await stopDownload();
       }
+      await stopDownload();
     })
 
     dl.on('progress', (stats) => {
@@ -193,12 +193,19 @@ class SongDownloadTask {
       this.dlState = state;
     });
 
-    dl.on('resume', (isResume: boolean) => {
+    let resumeRetryMax = 5;
+    let resumeRetry = 0;
+    dl.on('resume', async (isResume: boolean) => {
       this.state = SongDownloadTaskStatus.Downloading;
       if (isResume) {
         this.context.logger.debug(`恢复下载歌曲『${this.resolvedSong.song.name}』`);
       } else {
-        this.context.logger.error(`无法恢复下载歌曲『${this.resolvedSong.song.name}』`);
+        if (resumeRetry >= resumeRetryMax) {
+          await stopDownload();
+          return;
+        }
+        resumeRetry++;
+        this.context.logger.error(`无法恢复下载歌曲『${this.resolvedSong.song.name}』${resumeRetry}/${resumeRetryMax}`);
       }
     });
 
@@ -214,36 +221,37 @@ class SongDownloadTask {
       this.context.logger.debug(`重试下载歌曲『${this.resolvedSong.song.name}』${attempts}/${retry.maxRetries}`);
     });
 
-    dl.once('timeout', () => {
-      cancelContext.emit('done');
+    dl.once('timeout', async () => {
       this.state = SongDownloadTaskStatus.Timeout;
       this.context.logger.debug(`歌曲『${this.resolvedSong.song.name}』下载超时`, {
         url: this.http.url
       });
+      await stopDownload();
     });
 
     dl.once('download', (stats) => {
+      startNanoTs = process.hrtime.bigint();
       this.state = SongDownloadTaskStatus.Downloading;
       this.context.logger.debug(`开始下载歌曲『${this.resolvedSong.song.name}』`);
     })
 
-    dl.once('skip', (stats) => {
+    dl.once('skip', async (stats) => {
       cancelContext.emit('done');
       this.state = SongDownloadTaskStatus.Skipped;
       this.context.logger.info(`跳过下载歌曲『${this.resolvedSong.song.name}』`);
+      await stopDownload();
     });
 
     dl.once('stop', async () => {
-      cancelContext.emit('done');
       this.context.logger.debug(`检测到中止信号，结束下载歌曲『${this.resolvedSong.song.name}』`, {
         path: this.getTargetPath(),
         desc: this.getStateDescription(),
         error: this.err,
       });
+      await stopDownload();
     });
 
-    dl.once('end', (stats) => {
-      cancelContext.emit('done');
+    dl.once('end', async (stats) => {
       if (!this.testChecksum()) {
         let message = `歌曲『${this.resolvedSong.song.name}』文件校验失败`;
         this.state = SongDownloadTaskStatus.Error;
@@ -265,6 +273,7 @@ class SongDownloadTask {
           speedAvg: `${dl.getStats().downloaded*1e3/Number(duration.toString())} MB/S`
         });
       }
+      await stopDownload();
     })
 
     dl.once('error', async (err) => {
@@ -281,7 +290,10 @@ class SongDownloadTask {
             this.err = new Error(reason);
             await stopDownload();
             return false;
-        }).finally(() => cancelContext.emit('done'));
+        }).finally(() => {
+          cancelContext.emit('done');
+          return this.dlState == DH_STATES.FINISHED;
+        });
 
       const allThreads = [
         cancelSignal,
@@ -289,7 +301,11 @@ class SongDownloadTask {
       ];
 
       await Promise.race(allThreads)
-        .catch((reason) => {throw new Error(reason);})
+        .catch(async (reason) => {
+          this.err = new Error(reason);
+          this.state = SongDownloadTaskStatus.Error;
+          await stopDownload();
+        })
         .finally(() => cancelContext.emit('done'));
     } catch (e) {
       this.state = SongDownloadTaskStatus.Error;
@@ -314,12 +330,12 @@ class SongDownloadTask {
     let dlOptions = {
       method: this.http.method,
       fileName: this.getFileName(),
-      timeout: 300 * 1e3,
+      timeout: 120 * 1e3,
       retry: {
         maxRetries: 3,
         delay: 100,
       },
-      progressThrottle: 5e3,
+      progressThrottle: 3e3,
     } as DownloaderHelperOptions;
 
     if (!fs.existsSync(this.getTargetDir())) {
@@ -352,6 +368,7 @@ class SongDownloadTask {
         } else {
           dlOptions.resumeIfFileExists = true;
           dlOptions.resumeOnIncomplete = true;
+          dlOptions.resumeOnIncompleteMaxRetry = 5;
         }
       } else {
         dlOptions.override = {
