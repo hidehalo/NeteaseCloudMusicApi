@@ -424,7 +424,7 @@ class Producer {
         }
         await Promise.all(addJobThreads)
         .catch((reason) => {
-          this.context.logger.error(`下载歌单『${query.id}』入队失败`, {reason, resolvedSongsArr});
+          this.context.logger.warn(`下载歌单『${query.id}』入队失败`, {reason, resolvedSongsArr});
         });
       }
       while (runLoop);

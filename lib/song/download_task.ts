@@ -29,7 +29,7 @@ enum SongDownloadTaskStatus {
   Cancel,
 }
 
-interface Tags {
+interface MusicTags {
   coverUrl: string
   title: string
   albumName: string
@@ -91,9 +91,9 @@ class SongDownloadTask {
     for (let i = 0; i < 1; i++) {
       artisanNames.push(this.resolvedSong.artisans[i].name);
     }
-    let dirBaseArtisan = artisanNames.join(',').replace(/\//g, ':');
+    let dirBaseArtisan = artisanNames.join(',')?.replace(/\//g, ':');
     dirBaseArtisan = dirBaseArtisan? dirBaseArtisan: '未知艺术家';
-    let dirBaseAlbum = this.resolvedSong.album.name.replace(/\//g, ':');
+    let dirBaseAlbum = this.resolvedSong.album.name?.replace(/\//g, ':');
     dirBaseAlbum = dirBaseAlbum? dirBaseAlbum: '未知专辑';
     return `${this.rootDir}/${dirBaseArtisan}/${dirBaseAlbum}`;
   }
@@ -131,13 +131,19 @@ class SongDownloadTask {
     if (fromCache) {
       return this.targetFileChecksumCache? this.targetFileChecksumCache: '';
     }
-    this.targetFileChecksumCache = FileMD5Checksum.sync(this.getTargetPath());
+    this.targetFileChecksumCache = '';
+    if (this.hasFileExists()) {
+      this.targetFileChecksumCache = FileMD5Checksum.sync(this.getTargetPath());
+    }
     return this.targetFileChecksumCache;
   }
 
   getTargetFileSize(): number {
-    const fileStats = fs.statSync(this.getTargetPath());
-    return fileStats.size;
+    if (this.hasFileExists()) {
+      const fileStats = fs.statSync(this.getTargetPath());
+      return fileStats.size;
+    }
+    return 0;
   }
 
   private testChecksum(): boolean {
@@ -169,7 +175,7 @@ class SongDownloadTask {
           this.dlState == DH_STATES.SKIPPED ||
           this.dlState == DH_STATES.STARTED
         ) {
-        await dl.pause();
+        await dl.pause().catch(() => false);
         cancelContext.emit('done');
       }
     };
@@ -180,7 +186,7 @@ class SongDownloadTask {
         this.state = SongDownloadTaskStatus.Cancel;
       }
       await stopDownload();
-    })
+    });
 
     dl.on('progress', (stats) => {
       if (stats.speed > speedMax) {
@@ -205,7 +211,7 @@ class SongDownloadTask {
           return;
         }
         resumeRetry++;
-        this.context.logger.error(`无法恢复下载歌曲『${this.resolvedSong.song.name}』${resumeRetry}/${resumeRetryMax}`);
+        this.context.logger.warn(`尝试恢复下载歌曲『${this.resolvedSong.song.name}』失败 ${resumeRetry}/${resumeRetryMax}`);
       }
     });
 
@@ -229,11 +235,13 @@ class SongDownloadTask {
       await stopDownload();
     });
 
+    let lastDownloaded = 0;
     dl.once('download', (stats) => {
       startNanoTs = process.hrtime.bigint();
+      lastDownloaded = dl.getStats().downloaded;
       this.state = SongDownloadTaskStatus.Downloading;
       this.context.logger.debug(`开始下载歌曲『${this.resolvedSong.song.name}』`);
-    })
+    });
 
     dl.once('skip', async (stats) => {
       cancelContext.emit('done');
@@ -269,8 +277,9 @@ class SongDownloadTask {
         this.context.logger.info(`歌曲『${this.resolvedSong.song.name}』下载完成`, {
           path: this.getTargetPath(),
           duration: `${Number(duration.toString()) * 1e-9} S`,
+          totalSize: `${dl.getStats().total*1e-6} MB`,
           speedMax: `${speedMax*1e-6} MB/S`,
-          speedAvg: `${dl.getStats().downloaded*1e3/Number(duration.toString())} MB/S`
+          speedAvg: `${(dl.getStats().downloaded-lastDownloaded)*1e3/Number(duration.toString())} MB/S`
         });
       }
       await stopDownload();
@@ -320,7 +329,10 @@ class SongDownloadTask {
         this.dlState as DH_STATES != DH_STATES.SKIPPED
       )
     ) {
-      this.context.logger.error(`歌曲『${this.resolvedSong.song.name}』下载失败`);
+      this.context.logger.error(`歌曲『${this.resolvedSong.song.name}』下载失败`, {
+        songId: this.resolvedSong.song.id,
+        err: this.err,
+      });
     }
   }
 
@@ -377,7 +389,10 @@ class SongDownloadTask {
       }
     }
 
-    await this.startDownload(dlOptions);
+    await this.startDownload(dlOptions).catch((reason) => {
+      this.state = SongDownloadTaskStatus.Error;
+      this.err = new Error(reason);
+    });
   }
 }
 
