@@ -1,4 +1,4 @@
-// 下载歌曲到本地
+// 下载歌单到本地
 module.exports = async (query, request, app) => {
   const dq = app.get('downloadQueue')
   const hasQueue = dq != undefined && dq != null

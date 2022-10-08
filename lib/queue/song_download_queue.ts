@@ -374,6 +374,7 @@ class Producer {
       let jobData = {
         resolvedSong: resolvedSongs[i],
       } as DownloadSongJobData;
+      // TODO: 支持跳过一些已经完成的任务
       jobsBatch.push({
         name: jobName,
         data: jobData

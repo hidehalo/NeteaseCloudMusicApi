@@ -55,7 +55,9 @@ class SongResolver {
 
   async resolveBatch(query: BatchSongQuery): Promise<ResolvedSong[]> {
     let request = new StaticIpRequest(this.context, query.ip);
-    let songsResp = await getSongsDetail(query, request.send.bind(request));
+    let queryPolyfill = { ...query } as any;
+    queryPolyfill.ids = query.ids.join(',');
+    let songsResp = await getSongsDetail(queryPolyfill, request.send.bind(request));
     let resolvedSongs = [] as ResolvedSong[];
     for (let i = 0; i < songsResp.body.songs.length; i++) {
       let song = songsResp.body.songs[i] as Song;
