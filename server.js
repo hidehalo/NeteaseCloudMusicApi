@@ -12,6 +12,7 @@ import { StaticIpRequest } from './lib/http'
 import { ServerContext } from './lib/context'
 import { transports, format, createLogger } from 'winston'
 import { fileTrace } from './lib/logger/format'
+import generateConfig from './generateConfig'
 require('dotenv').config()
 const { createBullBoard } = require('@bull-board/api')
 const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter')
@@ -355,7 +356,13 @@ async function serveNcmApi(options) {
   }
   process.on('SIGINT', gracefulShutdown)
   process.on('SIGTERM', gracefulShutdown)
-  // process.on('SIGKILL', gracefulShutdown)
+
+  const anonymous = process.env.ANONYMOUS ? true : false
+  console.log(process.env.ANONYMOUS)
+  if (anonymous) {
+    console.log('it,s me!')
+    await generateConfig()
+  }
 
   // Task queue
   const dq = new SongDownloadQueue(context, process.env.DOWNLOAD_DIR, {

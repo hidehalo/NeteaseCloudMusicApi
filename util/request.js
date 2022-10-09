@@ -6,7 +6,7 @@ const http = require('http')
 const https = require('https')
 const tunnel = require('tunnel')
 const { URLSearchParams, URL } = require('url')
-const config = require('../util/config.json')
+const token = require('../database/token.json')
 // request.debug = true // 开启可看到更详细信息
 
 const chooseUserAgent = (ua = false) => {
@@ -72,7 +72,7 @@ const createRequest = (method, url, data = {}, options) => {
       if (!options.cookie.MUSIC_U) {
         // 游客
         if (!options.cookie.MUSIC_A) {
-          options.cookie.MUSIC_A = config.anonymous_token
+          options.cookie.MUSIC_A = token.anonymous_token
         }
       }
       headers['Cookie'] = Object.keys(options.cookie)
