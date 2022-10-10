@@ -155,10 +155,24 @@ async function consturctServer(moduleDefs) {
       !req.path.includes('.') &&
       !req.path.includes('/admin')
     ) {
+      const capitalizeFirstLetter = (string) => {
+        return string.charAt(0).toUpperCase() + string.slice(1)
+      }
+      let allowHeaders = Object.keys(req.headers)
+      allowHeaders.push(...['X-Requested-With', 'Content-Type', 'X-XSRF-TOKEN'])
+      for (let i = 0; i < allowHeaders.length; i++) {
+        let prepareToUpper = allowHeaders[i].split('-')
+        let upper = []
+        for (let j = 0; j < prepareToUpper.length; j++) {
+          upper.push(capitalizeFirstLetter(prepareToUpper[j]))
+        }
+        allowHeaders[i] = upper.join('-')
+      }
       res.set({
         'Access-Control-Allow-Credentials': true,
         'Access-Control-Allow-Origin': req.headers.origin || '*',
-        'Access-Control-Allow-Headers': 'X-Requested-With,Content-Type',
+        'Access-Control-Allow-Headers':
+          allowHeaders.join(',') || 'X-Requested-With,Content-Type',
         'Access-Control-Allow-Methods': 'PUT,POST,GET,DELETE,OPTIONS',
         'Content-Type': 'application/json; charset=utf-8',
       })
@@ -357,12 +371,9 @@ async function serveNcmApi(options) {
   process.on('SIGINT', gracefulShutdown)
   process.on('SIGTERM', gracefulShutdown)
 
-  const anonymous = process.env.ANONYMOUS ? true : false
-  console.log(process.env.ANONYMOUS)
-  if (anonymous) {
-    console.log('it,s me!')
-    await generateConfig()
-  }
+  // if (process.env.ANONYMOUS) {
+  //   await generateConfig()
+  // }
 
   // Task queue
   const dq = new SongDownloadQueue(context, process.env.DOWNLOAD_DIR, {
