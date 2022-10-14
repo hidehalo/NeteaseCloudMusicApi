@@ -439,7 +439,13 @@ class Producer {
       this.context.logger.info(`下载歌单『${query.id}』任务添加成功，下载队列新增 ${count} 首歌曲，共计耗时 ${1e-9 * Number(duration.toString())} 秒`);
     }
   }
+
+  // TODO: 实现下载专辑全部歌曲的功能
 }
+
+// TODO: 实现上传云盘的功能
+// TODO: 实现下载任务筛除的功能
+// TODO: 实在下载状态、下载进度状态的查询功能
 
 export {
   SongDownloadQueue,
