@@ -48,7 +48,7 @@ class Chunk {
     for (let i = 0; i < songs.length; i++) {
       let song = songs[i] as Song;
       let songQuery = {
-        id: song.id,
+        id: song.id.toString(),
         ip: this.query.ip,
         cookie: this.query.cookie,
         proxy: this.query?.proxy,
@@ -97,7 +97,7 @@ class TrackResolver {
       for (let i = 0; i < songs.length; i++) {
         let song = songs[i] as Song;
         let songQuery = {
-          id: song.id,
+          id: song.id.toString(),
           ip: query.ip,
           cookie: query.cookie,
           proxy: query?.proxy,

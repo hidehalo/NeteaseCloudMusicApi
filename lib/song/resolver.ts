@@ -5,19 +5,19 @@ import { StaticIpRequest, BasicQuery } from '../http'
 type Duration = number
 
 interface Album {
-  id: number|string
+  id: number
   name: string
   picUrl: string
 }
 
 interface Artisan {
-  id: number|string
+  id: number
   name: string
 }
 
 interface Song {
   name: string
-  id: number|string
+  id: number
   ar: Artisan[]
   al: Album
   dt: Duration
@@ -63,7 +63,7 @@ class SongResolver {
       let song = songsResp.body.songs[i] as Song;
       let SongQuery = {
         ip: query.ip,
-        id: song.id,
+        id: song.id.toString(),
         cookie: query.cookie,
       } as SongQuery;
       let resolvedSong = new ResolvedSong(SongQuery, song);

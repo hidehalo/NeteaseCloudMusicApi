@@ -88,18 +88,7 @@ class SongDownloader {
       rootPath: rootPath,
       resolvedSong: resolvedSong
     });
-
-    let songRecord = {
-      songId: Number(resolvedSong.song.id).toFixed(0),
-      songName: resolvedSong.song.name,
-      coverUrl: resolvedSong.album.picUrl,
-      trackNumber: resolvedSong.song.no,
-      albumName: resolvedSong.album.name,
-      artistsName: resolvedSong.artisans.flatMap((artisan) => artisan.name).join(','),
-      sourceUrl: http.url? http.url: '',
-      sourceChecksum: http.checksum,
-      sourceFileSize: http.totalSize,
-    } as SongRecord;
+    let songRecord = { ...task.songRecord };
 
     if (!http.url) {
       let errMsg = `歌曲『${resolvedSong.song.name}』无法解析下载地址`;

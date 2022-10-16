@@ -13,20 +13,21 @@ interface SongRecord {
   sourceChecksum: string,
   sourceFileSize: number,
   targetPath: string,
-  targetChecksum: string, 
+  targetChecksum: string,
   targetFileSize: number,
   state: string,
   stateDesc: string,
   createdAt?: string,
 }
 
-class SongRepository
-{
+class SongRepository {
   private static store: Knex<SongRecord>
 
   constructor() {
-    let appEnv = process.env.APP_ENV? process.env.APP_ENV: 'development';
-    SongRepository.store = createKnex<SongRecord>(KnexConfig[appEnv]);
+    let appEnv = process.env.APP_ENV ? process.env.APP_ENV : 'development';
+    if (!SongRepository.store) {
+      SongRepository.store = createKnex<SongRecord>(KnexConfig[appEnv]);
+    }
   }
 
   private createQueryBuilder(): Knex.QueryBuilder {
@@ -38,7 +39,11 @@ class SongRepository
   }
 
   async findBySongId(songId: string, fields: string[] = ['*']): Promise<SongRecord> {
-    return await this.createQueryBuilder().where('songId', songId).first(fields);
+    return await this.createQueryBuilder().where('songId', songId).first(fields).catch(e => { throw e });
+  }
+
+  async findMany(songsId: string[], fields: string[] = ['*']): Promise<SongRecord[]> {
+    return await this.createQueryBuilder().where('songId', 'in', songsId).column(fields).select().catch(e => { throw e });
   }
 
   // TODO: paginate & get
