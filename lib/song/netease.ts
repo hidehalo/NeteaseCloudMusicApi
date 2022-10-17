@@ -20,7 +20,9 @@ class NeteaseSongRepository {
         let mapById = new Map<string, SongRecord>();
         let songRecords = await this.songRepo.findMany(songsId);
         for (let i = 0; i < songRecords.length; i++) {
-          mapById.set(songRecords[i].songId, songRecords[i]);
+          if (songRecords[i]) {
+            mapById.set(songRecords[i].songId, songRecords[i]);
+          }
         }
         let ret = [] as NeteaseSong[];
         for (let i = 0; i < songs.length; i++) {

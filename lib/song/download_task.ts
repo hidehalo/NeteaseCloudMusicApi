@@ -202,6 +202,13 @@ class SongDownloadTask {
         cancelContext.emit('done');
       }
     };
+
+    const errorHandler = async (err: Error) => {
+      this.changeState(SongDownloadTaskStatus.Error);
+      this.err = err;
+      await stopDownload();
+    };
+
     // TODO: 当任务状态在转换时，应当对下载的歌曲记录进行写库
     this.context.once('done', async () => {
       const stats = dl.getStats();
@@ -211,10 +218,12 @@ class SongDownloadTask {
       await stopDownload();
     });
 
-    dl.on('progress', (stats) => {
+    dl.on('progress', async (stats) => {
       if (stats.speed > speedMax) {
         speedMax = stats.speed;
       }
+      this.songRecord.downloadProgress = stats.progress;
+      await SongDownloadTask.repo.upsert(this.songRecord);
     });
 
     dl.on('stateChanged', (state) => {
@@ -309,20 +318,14 @@ class SongDownloadTask {
     })
 
     dl.once('error', async (err) => {
-      // TODO: 减少重复代码
-      this.err = new Error(err.message);
-      this.state = SongDownloadTaskStatus.Error;
-      await stopDownload();
+      await errorHandler(err);
     });
 
     try {
       const dlThread = dl.start()
         .catch(
           async (reason) => {
-            // TODO: 同上
-            this.state = SongDownloadTaskStatus.Error;
-            this.err = new Error(reason);
-            await stopDownload();
+            errorHandler(reason);
             return false;
         }).finally(() => {
           cancelContext.emit('done');
@@ -336,15 +339,11 @@ class SongDownloadTask {
 
       await Promise.race(allThreads)
         .catch(async (reason) => {
-          this.err = new Error(reason);
-          this.state = SongDownloadTaskStatus.Error;
-          await stopDownload();
+          await errorHandler(reason);
         })
         .finally(() => cancelContext.emit('done'));
     } catch (e) {
-      this.state = SongDownloadTaskStatus.Error;
-      this.err = e as Error;
-      await stopDownload();
+      await errorHandler(e as Error);
     }
 
     let dlStats = dl.getStats();
@@ -363,7 +362,7 @@ class SongDownloadTask {
 
   async run(mode: DownloadTaskRunMode = DownloadTaskRunMode.Restart): Promise<void> {
     this.context.logger.debug(`下载歌曲『${this.getFileName()}』任务运行在${DownloadTaskRunModeText[mode]}模式`);
-    this.state = SongDownloadTaskStatus.Waiting;
+    this.changeState(SongDownloadTaskStatus.Waiting);
     let dlOptions = {
       method: this.http.method,
       fileName: this.getFileName(),
@@ -372,7 +371,7 @@ class SongDownloadTask {
         maxRetries: 3,
         delay: 100,
       },
-      progressThrottle: 3e3,
+      progressThrottle: 1e3,
     } as DownloaderHelperOptions;
 
     if (!fs.existsSync(this.getTargetDir())) {
@@ -381,7 +380,7 @@ class SongDownloadTask {
 
     if (this.hasFileExists()) {
       if (this.testChecksum()) {
-        this.state = SongDownloadTaskStatus.Skipped
+        this.changeState(SongDownloadTaskStatus.Skipped);
         this.context.logger.info(`跳过下载歌曲『${this.resolvedSong.song.name}』`);
         return
       }
@@ -414,9 +413,10 @@ class SongDownloadTask {
       }
     }
 
-    await this.startDownload(dlOptions).catch((reason) => {
-      this.state = SongDownloadTaskStatus.Error;
-      this.err = new Error(reason);
+    await this.startDownload(dlOptions)
+    .catch((reason) => {
+      this.changeState(SongDownloadTaskStatus.Error);
+      this.err = reason;
     });
   }
 }
