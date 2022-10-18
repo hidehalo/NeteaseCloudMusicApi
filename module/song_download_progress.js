@@ -7,7 +7,33 @@ module.exports = (query, request) => {
   return repo
     .findMany(ids, ['songId', 'downloadProgress', 'state'])
     .then((records) => {
-      console.log(records)
+      // ORM
+      if (!records.length) {
+        return Array(ids.length).fill(undefined)
+      }
+
+      let mapById = new Map()
+      let withoutPk = false
+      for (let i = 0; i < records.length; i++) {
+        if (records[i].hasOwnProperty('songId')) {
+          mapById.set(records[i].songId, records[i])
+        } else {
+          withoutPk = true
+          break
+        }
+      }
+
+      if (withoutPk) {
+        return records
+      }
+
+      let newRecords = []
+      for (let i = 0; i < ids.length; i++) {
+        newRecords.push(mapById.get(ids[i]))
+      }
+      return newRecords
+    })
+    .then((records) => {
       let progress = []
       for (let i = 0; i < records.length; i++) {
         let record = records[i]

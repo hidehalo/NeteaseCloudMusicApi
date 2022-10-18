@@ -209,7 +209,6 @@ class SongDownloadTask {
       await stopDownload();
     };
 
-    // TODO: 当任务状态在转换时，应当对下载的歌曲记录进行写库
     this.context.once('done', async () => {
       const stats = dl.getStats();
       if (stats.downloaded < stats.total) {
@@ -278,6 +277,9 @@ class SongDownloadTask {
     dl.once('skip', async (stats) => {
       cancelContext.emit('done');
       this.changeState(SongDownloadTaskStatus.Skipped);
+      // FIXME: 有时候网易的数据库是有错误的...
+      // 比如下载的文件比给定的尺寸要大，checksum 也不一致
+      console.log(stats, this.songRecord.state);
       this.context.logger.info(`跳过下载歌曲『${this.resolvedSong.song.name}』`);
       await stopDownload();
     });
@@ -353,6 +355,7 @@ class SongDownloadTask {
         this.dlState as DH_STATES != DH_STATES.SKIPPED
       )
     ) {
+      console.log(dlStats.downloaded, dlStats.total, this.dlState as DH_STATES);
       this.context.logger.error(`歌曲『${this.resolvedSong.song.name}』下载失败`, {
         songId: this.resolvedSong.song.id,
         err: this.err,

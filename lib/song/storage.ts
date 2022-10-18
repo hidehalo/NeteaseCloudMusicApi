@@ -40,38 +40,12 @@ class SongRepository {
   }
 
   async findBySongId(songId: string, fields: string[] = ['*']): Promise<SongRecord> {
-    return await this.createQueryBuilder().where('songId', songId).first(fields).catch(e => { throw e });
+    return await this.createQueryBuilder().where('songId', songId).first(fields)
+      .catch(e => { throw e });
   }
 
   async findMany(songsId: string[], fields: string[] = ['*']): Promise<SongRecord[]> {
     return await this.createQueryBuilder().where('songId', 'in', songsId).column(fields).select()
-      .then(records => {
-        // ORM
-        if (!records.length) {
-          return Array(songsId.length).fill(undefined);
-        }
-
-        let mapById = new Map<string, SongRecord>();
-        let withoutPk = false;
-        for (let i = 0; i < records.length; i++) {
-          if (records[i].hasOwnProperty('songId')) {
-            mapById.set(records[i].songId, records[i]);
-          } else {
-            withoutPk = true;
-            break;
-          }
-        }
-
-        if (withoutPk) {
-          return records;
-        }
-
-        let newRecords = [];
-        for (let i = 0; i < songsId.length; i++) {
-          newRecords.push(mapById.get(songsId[i]));
-        }
-        return newRecords;
-      })
       .catch(e => { throw e });
   }
 
