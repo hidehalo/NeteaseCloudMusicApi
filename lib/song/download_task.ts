@@ -277,8 +277,10 @@ class SongDownloadTask {
     dl.once('skip', async (stats) => {
       cancelContext.emit('done');
       this.changeState(SongDownloadTaskStatus.Skipped);
-      // FIXME: 有时候网易的数据库是有错误的...
+      // FIXME: 网易的数据库是有可能是错误的...
       // 比如下载的文件比给定的尺寸要大，checksum 也不一致
+      // 检验一下这个问题，究竟是下载器在网络不稳定的情况下，未正确的进行断线重新下载
+      // 还是确实由网易云数据库错误导致的
       console.log(stats, this.songRecord.state);
       this.context.logger.info(`跳过下载歌曲『${this.resolvedSong.song.name}』`);
       await stopDownload();

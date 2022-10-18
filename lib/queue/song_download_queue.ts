@@ -374,7 +374,6 @@ class Producer {
       let jobData = {
         resolvedSong: resolvedSongs[i],
       } as DownloadSongJobData;
-      // TODO: 支持跳过一些已经完成的任务
       jobsBatch.push({
         name: jobName,
         data: jobData
@@ -445,7 +444,6 @@ class Producer {
 
 // TODO: 实现上传云盘的功能
 // TODO: 实现下载任务筛除的功能
-// TODO: 实在下载状态、下载进度状态的查询功能
 
 export {
   SongDownloadQueue,

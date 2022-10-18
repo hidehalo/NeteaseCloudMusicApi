@@ -29,8 +29,6 @@ class SongDownloader {
     this.songRepo = new SongRepository();
   }
 
-  // FIXME: 有概率拿到只有 30 秒的试听音乐文件下载地址
-  // 测试样本 装醉
   private async resolveDownloadHttp(context: ServerContext, resolvedSong: ResolvedSong): Promise<HttpEntity> {
     try {
       const request = new StaticIpRequest(context, resolvedSong.query.ip);

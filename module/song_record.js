@@ -1,11 +1,13 @@
-// 歌曲下载进度
+// 查询歌曲在本地数据库中的记录
+
 import { SongRepository } from '../lib/song'
 
 module.exports = (query, request) => {
   let ids = query.ids.split(',')
   let repo = new SongRepository()
+
   return repo
-    .findMany(ids, ['songId', 'downloadProgress', 'state'])
+    .findMany(ids, ['songId', 'state', 'stateDesc', 'downloadProgress'])
     .then((records) => {
       // ORM
       if (!records.length) {
@@ -15,6 +17,9 @@ module.exports = (query, request) => {
       let mapById = new Map()
       let withoutPk = false
       for (let i = 0; i < records.length; i++) {
+        if (records[i].state == '下载完成' || records[i].state == '跳过下载') {
+          records[i].downloadProgress = 100
+        }
         if (records[i].hasOwnProperty('songId')) {
           mapById.set(records[i].songId, records[i])
         } else {
@@ -34,22 +39,11 @@ module.exports = (query, request) => {
       return newRecords
     })
     .then((records) => {
-      let progress = []
-      for (let i = 0; i < records.length; i++) {
-        let record = records[i]
-        if (!record) {
-          progress.push(0)
-        } else if (record.state == '下载完成') {
-          progress.push(100)
-        } else {
-          progress.push(record.downloadProgress || 0)
-        }
-      }
       let res = {
         status: 200,
         body: {
           code: 200,
-          data: progress,
+          data: records,
           message: 'ok',
         },
         cookie: [],

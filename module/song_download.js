@@ -1,5 +1,6 @@
 // 下载歌曲到本地
 module.exports = (query, request, app) => {
+  // TODO: 支持跳过一些已经完成的任务
   const dq = app.get('downloadQueue')
   let resp = {
     status: 200,

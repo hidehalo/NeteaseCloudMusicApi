@@ -58,6 +58,9 @@ class SongResolver {
     let queryPolyfill = { ...query } as any;
     queryPolyfill.ids = query.ids.join(',');
     let songsResp = await getSongsDetail(queryPolyfill, request.send.bind(request));
+    // FIXME: 有时候 `getSongsDetail` 无法查询到音乐信息，但是这个音乐却是可以下载的...
+    // 这个有可能是由于云盘音乐数据缺失导致的
+    // 建议对缺失的数据再做一次 /user/cloud/detail?id=... 的数据补充
     let resolvedSongs = [] as ResolvedSong[];
     for (let i = 0; i < songsResp.body.songs.length; i++) {
       let song = songsResp.body.songs[i] as Song;
