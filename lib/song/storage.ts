@@ -49,10 +49,14 @@ class SongRepository {
       .catch(e => { throw e });
   }
 
-  // TODO: paginate & get
-
   async upsert(record: SongRecord): Promise<number[]> {
     return await this.createCommand().insert(record).onConflict('songId').merge();
+  }
+
+  // TODO: impl
+
+  async paginate(offset: number, limit: number) {
+
   }
 }
 
