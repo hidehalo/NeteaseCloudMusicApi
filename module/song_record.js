@@ -4,26 +4,12 @@ import { SongRepository } from '../lib/song'
 
 module.exports = (query, request) => {
   let ids = query.ids.split(',')
-  let format = query.format || 'download'
+  // let format = query.format || 'download'
   let repo = new SongRepository()
-  let fiedls
-  if (format == 'download') {
-    fiedls = ['songId', 'state', 'stateDesc', 'downloadProgress']
-  } else {
-    fiedls = [
-      'songId',
-      'state',
-      'stateDesc',
-      'artistsName',
-      'songName',
-      'albumName',
-      'targetFileSize',
-      'createdAt',
-    ]
-  }
+  let fields = ['songId', 'state', 'stateDesc', 'downloadProgress']
 
   return repo
-    .findMany(ids, fiedls)
+    .findMany(ids, fields)
     .then((records) => {
       // ORM
       if (!records.length) {

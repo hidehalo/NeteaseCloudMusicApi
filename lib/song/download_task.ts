@@ -63,6 +63,10 @@ const DownloadTaskRunModeText = {
   [DownloadTaskRunMode.Restart]: '重新下载'
 };
 
+function getStateDescription(state: SongDownloadTaskStatus) {
+  return StatusDescription[state];
+}
+
 class SongDownloadTask {
 
   context: ServerContext;
@@ -137,7 +141,7 @@ class SongDownloadTask {
   }
 
   getStateDescription(): string {
-    return StatusDescription[this.state];
+    return getStateDescription(this.state);
   }
 
   getTargetPath(): string {
@@ -432,4 +436,5 @@ export {
   SongDownloadTaskStatus,
   SongDownloadTaskParams,
   DownloadTaskRunMode,
+  getStateDescription,
 }

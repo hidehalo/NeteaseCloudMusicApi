@@ -1,6 +1,7 @@
 import { knex as createKnex, Knex } from 'knex';
 import process from 'process';
 import KnexConfig from '../../database/knexfile';
+import { SongDownloadTaskStatus, getStateDescription } from './download_task';
 
 interface SongRecord {
   songId: string,
@@ -18,25 +19,58 @@ interface SongRecord {
   state: string,
   stateDesc: string,
   createdAt?: string,
-  downloadProgress?:number,
+  downloadProgress?: number,
 }
 
-class SongRepository {
-  private static store: Knex<SongRecord>
+abstract class Repository<RecordMapping extends {}, Result> {
+
+  protected constraints: Constraint[] = [];
+
+  createQueryBuilder(): Knex.QueryBuilder {
+    let qb = this.getStore().table(this.getTable());
+    for (let i = 0; i < this.constraints.length; i++) {
+      this.constraints[i].apply(qb);
+    }
+    return qb;
+  }
+
+  createCommand() {
+    return this.getStore().table(this.getTable());
+  }
+
+  abstract getStore(): Knex<RecordMapping, Result>;
+
+  abstract getTable(): string;
+
+  createStore(): Knex<RecordMapping, Result> {
+    let appEnv = process.env.APP_ENV ? process.env.APP_ENV : 'development';
+    return createKnex<RecordMapping, Result>(KnexConfig[appEnv]);
+  }
+
+  addConstraints(...constraints: Constraint[]) {
+    for (let i = 0; i < constraints.length; i++) {
+      this.constraints.push(constraints[i]);
+    }
+  }
+}
+
+class SongRepository extends Repository<SongRecord, any> {
+
+  private static store: Knex<SongRecord, any>;
 
   constructor() {
-    let appEnv = process.env.APP_ENV ? process.env.APP_ENV : 'development';
+    super();
     if (!SongRepository.store) {
-      SongRepository.store = createKnex<SongRecord>(KnexConfig[appEnv]);
+      SongRepository.store = this.createStore();
     }
   }
 
-  private createQueryBuilder(): Knex.QueryBuilder {
-    return SongRepository.store.table('songs');
+  getStore(): Knex<SongRecord, any> {
+    return SongRepository.store;
   }
 
-  private createCommand() {
-    return SongRepository.store.table('songs');
+  getTable(): string {
+    return 'songs';
   }
 
   async findBySongId(songId: string, fields: string[] = ['*']): Promise<SongRecord> {
@@ -53,14 +87,40 @@ class SongRepository {
     return await this.createCommand().insert(record).onConflict('songId').merge();
   }
 
-  // TODO: impl
+  async paginate(offset: number, limit: number, fields: string[] = ['*'], options = { cDt: undefined }) {
+    let query = this.createQueryBuilder();
+    if (options.cDt) {
+      let isoDt = new Date(options.cDt).toISOString();
+      query.where('createdAt', '>', isoDt);
+    }
+    return await query.offset(offset).limit(limit).column(fields).select();
+  }
+}
 
-  async paginate(offset: number, limit: number) {
+interface Constraint {
+  apply(query: Knex.QueryBuilder): void;
+}
 
+class StateIn implements Constraint {
+
+  private status;
+
+  constructor(status: SongDownloadTaskStatus[]) {
+    this.status = status;
+  }
+
+  apply(query: Knex.QueryBuilder): void {
+    let statusDesc = this.status.map(state => getStateDescription(state));
+    if (this.status.length == 1) {
+      query.where('state', statusDesc[0]);
+    } else {
+      query.whereIn('state', statusDesc);
+    }
   }
 }
 
 export {
   SongRecord,
-  SongRepository
+  SongRepository,
+  StateIn
 }
