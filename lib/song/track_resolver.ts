@@ -61,8 +61,17 @@ class Chunk {
       let newSongRecord = {
         songId: notExistsSongsId[i],
         state: getStateDescription(SongDownloadTaskStatus.Waiting),
+        stateDesc: getStateDescription(SongDownloadTaskStatus.Waiting),
       } as SongRecord;
       await Chunk.repo.upsert(newSongRecord);
+    }
+    for (let i = 0; i < allowDownloadSongsId.length; i++) {
+      let updateSongRecord = {
+        songId: allowDownloadSongsId[i],
+        state: getStateDescription(SongDownloadTaskStatus.Waiting),
+        stateDesc: getStateDescription(SongDownloadTaskStatus.Waiting),
+      } as SongRecord;
+      await Chunk.repo.upsert(updateSongRecord);
     }
     let needDownloadSongsId = [...notExistsSongsId, ...allowDownloadSongsId];
     let filter = new Map<string, boolean>();
