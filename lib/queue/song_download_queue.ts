@@ -1,10 +1,10 @@
 import * as BullMQ from 'bullmq';
-import { 
+import {
   SongDownloader, SongDownloadTaskStatus,
   ResolvedSong, SongResolver,
-  SongQuery, BatchSongQuery, 
+  SongQuery, BatchSongQuery,
   TrackResolver, TrackQuery,
-  
+
 } from '../song';
 import { ServerContext } from '../context';
 import os from 'os';
@@ -79,13 +79,13 @@ class SongDownloadQueue {
   }
 
   private getRedisConnConfig(): BullMQ.ConnectionOptions {
-      return {
-        host: '127.0.0.1',
-        port: 6379,
-        enableOfflineQueue: false,
-        enableAutoPipelining: true,
-        lazyConnect: true,
-      } as BullMQ.ConnectionOptions;
+    return {
+      host: '127.0.0.1',
+      port: 6379,
+      enableOfflineQueue: false,
+      enableAutoPipelining: true,
+      lazyConnect: true,
+    } as BullMQ.ConnectionOptions;
   }
 
   init() {
@@ -115,7 +115,7 @@ class SongDownloadQueue {
       },
     });
     this.queueDelegate.on('error', (err) => {
-      this.context.logger.error(`歌曲下载队列运行错误：${err?.message}`, {err});
+      this.context.logger.error(`歌曲下载队列运行错误：${err?.message}`, { err });
     });
   }
 
@@ -127,7 +127,7 @@ class SongDownloadQueue {
         maxStalledCount: 0,
       });
       this.queueSchd.on('stalled', (jobId, prev) => {
-        this.context.logger.error(`歌曲下载队列调度器停滞错误`, {jobId, prev});
+        this.context.logger.error(`歌曲下载队列调度器停滞错误`, { jobId, prev });
       });
     }
   }
@@ -152,11 +152,11 @@ class SongDownloadQueue {
       });
       this.worker.on('completed', (job: BullMQ.Job, result: any, prev: string) => {
         job.log(`任务已完成`);
-        this.context.logger.debug(`任务 ${job.id} 已完成`, {job: job.data.resolvedSong.song.name});
+        this.context.logger.debug(`任务 ${job.id} 已完成`, { job: job.data.resolvedSong.song.name });
       });
       this.worker.on('failed', (job: BullMQ.Job, error: Error, prev: string) => {
         job.log(`任务已失败`);
-        this.context.logger.debug(`任务 ${job.id} 已失败，原因是 ${job.failedReason}`, {job: job.data.resolvedSong.song.name});
+        this.context.logger.debug(`任务 ${job.id} 已失败，原因是 ${job.failedReason}`, { job: job.data.resolvedSong.song.name });
       });
       this.worker.on('error', (err: Error) => {
         this.context.logger.error(`歌曲下载队列执行器错误，原因是 ${err}`);
@@ -165,13 +165,13 @@ class SongDownloadQueue {
   }
 
   getConcurrency(): number {
-    return this.params.concurrency? this.params.concurrency: os.cpus().length;
+    return this.params.concurrency ? this.params.concurrency : os.cpus().length;
   }
 
   getTaskTimeout(): number {
-    return this.params.taskTimeoutMicroTs? this.params.taskTimeoutMicroTs: 3e4;
+    return this.params.taskTimeoutMicroTs ? this.params.taskTimeoutMicroTs : 3e4;
   }
-  
+
   async start(): Promise<void> {
     if (this.state == Status.Build) {
       this.init();
@@ -198,7 +198,7 @@ class SongDownloadQueue {
     await Promise.all(allThreads);
   }
 
-  async close(): Promise<boolean|undefined> {
+  async close(): Promise<boolean | undefined> {
     let oldState = this.state;
     if (this.state != Status.Closed && this.state != Status.Closing) {
       this.state = Status.Closing;
@@ -214,7 +214,7 @@ class SongDownloadQueue {
       });
 
       if (this.state != Status.Closing) {
-      this.context.logger.debug("歌曲下载队列关闭失败");
+        this.context.logger.debug("歌曲下载队列关闭失败");
         return false;
       }
       this.state = Status.Closed;
@@ -322,18 +322,18 @@ class Consumer {
       jobWorker,
       timeoutTimer,
     ])
-    .catch((reason) => {
-      this.context.logger.error(`任务 ${job.id} 执行错误`, {reason});
-      if (reason) {
-        job.log(`执行错误，原因是：${reason}`);
-        job.failedReason = reason;
-      }
-      return {
-        state: DownloadJobStatus.Error,
-        err: new Error(reason)
-      } as JobResult;
-    })
-    .finally(() => handleContext.emit('done'));
+      .catch((reason) => {
+        this.context.logger.error(`任务 ${job.id} 执行错误`, { reason });
+        if (reason) {
+          job.log(`执行错误，原因是：${reason}`);
+          job.failedReason = reason;
+        }
+        return {
+          state: DownloadJobStatus.Error,
+          err: new Error(reason)
+        } as JobResult;
+      })
+      .finally(() => handleContext.emit('done'));
 
     const jobResult = await run;
     if (jobResult.state != DownloadJobStatus.Succeed) {
@@ -350,7 +350,7 @@ class Consumer {
 }
 
 class Producer {
-  
+
   queue: SongDownloadQueue;
 
   context: ServerContext;
@@ -423,14 +423,14 @@ class Producer {
           break;
         }
         await Promise.all(addJobThreads)
-        .catch((reason) => {
-          this.context.logger.warn(`下载歌单『${query.id}』入队失败`, {reason, resolvedSongsArr});
-        });
+          .catch((reason) => {
+            this.context.logger.warn(`下载歌单『${query.id}』入队失败`, { reason, resolvedSongsArr });
+          });
       }
       while (runLoop);
     } catch (err) {
       let e = err as Error;
-      this.context.logger.error(`下载歌单『${query.id}』任务添加失败，原因是：${e.message}`, {err})
+      this.context.logger.error(`下载歌单『${query.id}』任务添加失败，原因是：${e.message}`, { err })
     }
     if (!runLoop) {
       let endNanoTs = process.hrtime.bigint();

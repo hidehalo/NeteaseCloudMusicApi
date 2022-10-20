@@ -31,7 +31,7 @@ abstract class Repository<RecordMapping extends {}, Result> {
     for (let i = 0; i < this.constraints.length; i++) {
       this.constraints[i].apply(qb);
     }
-    return qb;
+    return qb as Knex.QueryBuilder;
   }
 
   createCommand() {
@@ -56,7 +56,7 @@ abstract class Repository<RecordMapping extends {}, Result> {
 
 class SongRepository extends Repository<SongRecord, any> {
 
-  private static store: Knex<SongRecord, any>;
+  private static store: Knex<SongRecord>;
 
   constructor() {
     super();
@@ -91,9 +91,38 @@ class SongRepository extends Repository<SongRecord, any> {
     let query = this.createQueryBuilder();
     if (options.cDt) {
       let isoDt = new Date(options.cDt).toISOString();
-      query.where('createdAt', '>', isoDt);
+      query.where('createdAt', '<=', isoDt);
     }
-    return await query.offset(offset).limit(limit).column(fields).select();
+    return await query.orderBy('createdAt', 'desc').offset(offset).limit(limit).column(fields).select();
+  }
+
+  async notExists(songsId: string[]): Promise<string[]> {
+    let records: SongRecord[] = await this.createQueryBuilder().whereIn('songId', songsId).column(['songId']).select();
+    let querySongsId = records.flatMap(record => record.songId);
+    let filterMap = new Map<string, boolean>();
+    for (let i = 0; i < querySongsId.length; i++) {
+      filterMap.set(querySongsId[i], true);
+    }
+    let result = [];
+    for (let i = 0; i < songsId.length; i++) {
+      if (!filterMap.get(songsId[i])) {
+        result.push(songsId[i]);
+      }
+    }
+    return result;
+  }
+
+  async allowDownload(songsId: string[]): Promise<string[]> {
+    let status = [
+      SongDownloadTaskStatus.Cancel,
+      SongDownloadTaskStatus.Error,
+      SongDownloadTaskStatus.Timeout,
+    ];
+    let records = await this.createQueryBuilder()
+      .whereIn('songId', songsId)
+      .whereIn('state', status.map(state => getStateDescription(state))).column(['songId'])
+      .select();
+    return records.flatMap((record: SongRecord) => record.songId);
   }
 }
 

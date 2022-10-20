@@ -226,6 +226,7 @@ class SongDownloadTask {
         speedMax = stats.speed;
       }
       this.songRecord.downloadProgress = stats.progress;
+      this.songRecord.targetFileSize = stats.downloaded;
       await SongDownloadTask.repo.upsert(this.songRecord);
     });
 

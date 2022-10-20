@@ -3,10 +3,15 @@
 import { SongRepository } from '../lib/song'
 
 module.exports = (query, request) => {
-  let ids = query.ids.split(',')
-  // let format = query.format || 'download'
+  let ids = query.ids ? query.ids.split(',') : []
   let repo = new SongRepository()
-  let fields = ['songId', 'state', 'stateDesc', 'downloadProgress']
+  let fields = [
+    'songId',
+    'state',
+    'stateDesc',
+    'downloadProgress',
+    'targetFileSize',
+  ]
 
   return repo
     .findMany(ids, fields)
@@ -24,6 +29,9 @@ module.exports = (query, request) => {
         }
         if (records[i].downloadProgress === null) {
           records[i].downloadProgress = 0
+        }
+        if (records[i].targetFileSize === null) {
+          records[i].targetFileSize = 0
         }
         if (records[i].hasOwnProperty('songId')) {
           mapById.set(records[i].songId, records[i])
