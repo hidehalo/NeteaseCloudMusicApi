@@ -286,6 +286,7 @@ class SongDownloadTask {
       // 比如下载的文件比给定的尺寸要大，checksum 也不一致
       // 检验一下这个问题，究竟是下载器在网络不稳定的情况下，未正确的进行断线重新下载
       // 还是确实由网易云数据库错误导致的
+      // update: 可能是由多次重试下载引起的文件错误
       console.log(stats, this.songRecord.state);
       this.context.logger.info(`跳过下载歌曲『${this.resolvedSong.song.name}』`);
       await stopDownload();
@@ -407,10 +408,10 @@ class SongDownloadTask {
         const fileStats = fs.statSync(this.getTargetPath());
         if (fileStats.size >= this.totalSize) {
           // 还是不要直接覆盖的好...有点危险
-          // dlOptions.override = true;
-          dlOptions.override = {
-            skip: true,
-          }
+          dlOptions.override = true;
+          // dlOptions.override = {
+          //   skip: true,
+          // }
         } else {
           dlOptions.resumeIfFileExists = true;
           dlOptions.resumeOnIncomplete = true;

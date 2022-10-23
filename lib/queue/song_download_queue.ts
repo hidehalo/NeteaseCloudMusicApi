@@ -4,7 +4,7 @@ import {
   ResolvedSong, SongResolver,
   SongQuery, BatchSongQuery,
   TrackResolver, TrackQuery,
-
+  DownloadFilter
 } from '../song';
 import { ServerContext } from '../context';
 import os from 'os';
@@ -392,8 +392,24 @@ class Producer {
   }
 
   async downloadSongs(query: BatchSongQuery): Promise<void> {
-    let resolvedSongs = await this.songResolver.resolveBatch(query);
-    await this.addResolvedSongs(resolvedSongs);
+    let downloadFilter = new DownloadFilter(query.ids);
+    let filteredQuery = { ...query };
+    filteredQuery.ids = [];
+    await downloadFilter.prepare();
+    for (let i = 0; i < query.ids.length; i++) {
+      if (!downloadFilter.shouldSkip(query.ids[i])) {
+        filteredQuery.ids.push(query.ids[i]);
+      }
+    }
+    if (filteredQuery.ids.length > 0) {
+      await this.songResolver.resolveBatch(filteredQuery)
+        .then(resolvedSongs => {
+          this.addResolvedSongs(resolvedSongs);
+        });
+    }
+    if (filteredQuery.ids.length != query.ids.length) {
+      console.log(`跳过了${query.ids.length - filteredQuery.ids.length}`);
+    }
   }
 
   async downloadTrack(query: TrackQuery): Promise<void> {
@@ -438,12 +454,10 @@ class Producer {
       this.context.logger.info(`下载歌单『${query.id}』任务添加成功，下载队列新增 ${count} 首歌曲，共计耗时 ${1e-9 * Number(duration.toString())} 秒`);
     }
   }
-
-  // TODO: 实现下载专辑全部歌曲的功能
 }
 
 // TODO: 实现上传云盘的功能
-// TODO: 实现下载任务筛除的功能
+// TODO: 实现删除本地文件的功能
 
 export {
   SongDownloadQueue,

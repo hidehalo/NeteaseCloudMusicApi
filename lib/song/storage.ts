@@ -124,6 +124,17 @@ class SongRepository extends Repository<SongRecord, any> {
       .select();
     return records.flatMap((record: SongRecord) => record.songId);
   }
+
+  async batchUpdate(songsId: string[], modified: SongRecord) {
+    return await this.createCommand()
+      .whereIn('songId', songsId)
+      .update(modified);
+  }
+
+  async bulkInsert(songRecords: SongRecord[]) {
+    return await this.createCommand()
+      .insert(songRecords);
+  }
 }
 
 interface Constraint {

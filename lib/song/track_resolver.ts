@@ -2,8 +2,7 @@ import { ResolvedSong, Song, SongQuery } from "./resolver";
 import songsPaginator from '../../module/playlist_track_all';
 import { StaticIpRequest, BasicQuery } from '../http';
 import { ServerContext } from "../context";
-import { SongRecord, SongRepository } from "./storage";
-import { getStateDescription, SongDownloadTaskStatus } from "./download_task";
+import { DownloadFilter } from "./download_filter";
 
 type ResolvedTrack = ResolvedSong[];
 
@@ -22,16 +21,12 @@ class Chunk {
   request: StaticIpRequest;
   resolved: boolean;
   resolvedData: ResolvedTrack;
-  private static repo: SongRepository;
 
   constructor(query: ChunkQuery, request: StaticIpRequest) {
     this.query = query;
     this.request = request;
     this.resolved = false;
     this.resolvedData = [];
-    if (!Chunk.repo) {
-      Chunk.repo = new SongRepository();
-    }
   }
 
   next(): Chunk {
@@ -52,37 +47,14 @@ class Chunk {
       return this.resolvedData;
     }
     let songsId = songs.flatMap((song: Song) => song.id.toString());
-    let [notExistsSongsId, allowDownloadSongsId] = await Promise.all([
-      Chunk.repo.notExists(songsId),
-      Chunk.repo.allowDownload(songsId)
-    ]);
-    // TODO: batch insert. don't upsert
-    for (let i = 0; i < notExistsSongsId.length; i++) {
-      let newSongRecord = {
-        songId: notExistsSongsId[i],
-        state: getStateDescription(SongDownloadTaskStatus.Waiting),
-        stateDesc: getStateDescription(SongDownloadTaskStatus.Waiting),
-      } as SongRecord;
-      await Chunk.repo.upsert(newSongRecord);
-    }
-    for (let i = 0; i < allowDownloadSongsId.length; i++) {
-      let updateSongRecord = {
-        songId: allowDownloadSongsId[i],
-        state: getStateDescription(SongDownloadTaskStatus.Waiting),
-        stateDesc: getStateDescription(SongDownloadTaskStatus.Waiting),
-      } as SongRecord;
-      await Chunk.repo.upsert(updateSongRecord);
-    }
-    let needDownloadSongsId = [...notExistsSongsId, ...allowDownloadSongsId];
-    let filter = new Map<string, boolean>();
-    for (let i = 0; i < needDownloadSongsId.length; i++) {
-      filter.set(needDownloadSongsId[i], true);
-    }
+    let downloadFilter = new DownloadFilter(songsId);
+    await downloadFilter.prepare();
+
     let skip = 0;
     for (let i = 0; i < songs.length; i++) {
       let song = songs[i] as Song;
       let songId = song.id.toString();
-      if (!filter.get(songId)) {
+      if (downloadFilter.shouldSkip(songId)) {
         skip++;
         continue;
       }
