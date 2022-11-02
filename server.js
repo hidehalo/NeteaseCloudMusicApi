@@ -17,6 +17,7 @@ require('dotenv').config()
 const { createBullBoard } = require('@bull-board/api')
 const { BullMQAdapter } = require('@bull-board/api/bullMQAdapter')
 const { ExpressAdapter } = require('@bull-board/express')
+const ipUtil = require('ip')
 
 /**
  * The version check result.
@@ -247,10 +248,10 @@ async function consturctServer(moduleDefs) {
         req.body,
         req.files,
       )
-
       try {
-        let staticIpReq = new StaticIpRequest(app.get('context'), req.ip)
-        query.ip = req.ip
+        let ip = ipUtil.address()
+        let staticIpReq = new StaticIpRequest(app.get('context'), ip)
+        query.ip = staticIpReq.ip
         const moduleResponse = await moduleDef.module(
           query,
           staticIpReq.send.bind(staticIpReq),
