@@ -92,7 +92,10 @@ module.exports = async (query, request, app) => {
               }
             })
             .then(async (res) => {
-              if (res && res.status === 200 && res.body.code === 200) {
+              if (
+                (res && res.status === 200 && res.body.code === 200) ||
+                res.body.message == '纠错后的文件已在云盘存在'
+              ) {
                 let updatedRecord = { ...uploadSong, uploaded: true }
                 await repo.upsert(updatedRecord)
                 logger.info(`云盘歌曲『${uploadSong.songName}』上传成功`)
@@ -102,6 +105,7 @@ module.exports = async (query, request, app) => {
                   `云盘歌曲『${uploadSong.songName}』上传失败：${
                     res.body.message || res.body.msg
                   }`,
+                  { res },
                 )
                 return false
               }
