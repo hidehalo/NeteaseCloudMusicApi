@@ -277,8 +277,9 @@ async function consturctServer(moduleDefs) {
         res.status(moduleResponse.status).send(moduleResponse.body)
       } catch (/** @type {*} */ moduleResponse) {
         let logger = app.get('logger')
-        logger.error('[ERR]' + decode(req.originalUrl))
-        logger.info(JSON.stringify(moduleResponse))
+        logger.error('[ERR]' + decode(req.originalUrl), {
+          feedback: moduleResponse,
+        })
         if (!moduleResponse.body) {
           res.status(404).send({
             code: 404,

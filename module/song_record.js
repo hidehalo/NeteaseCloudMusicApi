@@ -11,6 +11,7 @@ module.exports = (query, request) => {
     'stateDesc',
     'downloadProgress',
     'targetFileSize',
+    'uploaded',
   ]
 
   return repo

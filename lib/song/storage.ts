@@ -20,6 +20,7 @@ interface SongRecord {
   stateDesc: string,
   createdAt?: string,
   downloadProgress?: number,
+  uploaded?: boolean,
 }
 
 abstract class Repository<RecordMapping extends {}, Result> {

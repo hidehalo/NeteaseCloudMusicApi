@@ -10,7 +10,6 @@ module.exports = (query, request) => {
   let repo = new SongRepository()
   if (state == 'waiting') {
     repo.addConstraints(new StateIn([SongDownloadTaskStatus.Waiting]))
-    console.log('waiting')
   } else if (state == 'downloading') {
     repo.addConstraints(new StateIn([SongDownloadTaskStatus.Downloading]))
   } else if (state == 'done') {
@@ -39,6 +38,7 @@ module.exports = (query, request) => {
     'albumName',
     'targetFileSize',
     'createdAt',
+    'uploaded',
   ]
 
   return repo
