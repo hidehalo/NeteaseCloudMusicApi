@@ -160,8 +160,22 @@ class StateIn implements Constraint {
   }
 }
 
+class UploadedEqual {
+  
+  private uploaded;
+
+  constructor(flag: boolean) {
+    this.uploaded = flag
+  }
+
+  apply(query: Knex.QueryBuilder): void {
+    query.where('uploaded', this.uploaded);
+  }
+}
+
 export {
   SongRecord,
   SongRepository,
-  StateIn
+  StateIn,
+  UploadedEqual
 }

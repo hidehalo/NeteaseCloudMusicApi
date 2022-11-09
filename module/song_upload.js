@@ -5,7 +5,8 @@ const fs = require('fs')
 import {
   SongRepository,
   SongDownloadTaskStatus,
-  getStateDescription,
+  StateIn,
+  UploadedEqual,
 } from '../lib/song'
 
 module.exports = async (query, request, app) => {
@@ -20,58 +21,64 @@ module.exports = async (query, request, app) => {
       'targetPath',
       'state',
       'uploaded',
+      'targetChecksum',
+      'targetFileSize',
     ]
-    let songs = []
+    let uploadSongs = []
     let offset = 0
-    let limit = 1000
+    const limit = 1000
     let runOnce = true
+    let tasks = []
+    const barrier = 4
+    repo.addConstraints(
+      new StateIn([SongDownloadTaskStatus.Downloaded]),
+      new UploadedEqual(false),
+    )
     do {
       if (ids[0] === 'all') {
         runOnce = false
-        songs = await repo.paginate(offset, limit, selectFields, {
+        uploadSongs = await repo.paginate(offset, limit, selectFields, {
           cDt: firstRecordCreatedAt,
         })
-        if (songs.length > 0 && firstRecordCreatedAt === undefined) {
-          firstRecordCreatedAt = songs[0].createdAt
+        if (uploadSongs.length > 0 && firstRecordCreatedAt === undefined) {
+          firstRecordCreatedAt = uploadSongs[0].createdAt
         }
-        offset += songs.length
+        offset += uploadSongs.length
       } else {
-        songs = await repo.findMany(ids, selectFields)
+        uploadSongs = await repo.findMany(ids, selectFields)
       }
-      let uploadSongs = []
-      for (let song of songs) {
-        if (
-          song.state ==
-            getStateDescription(SongDownloadTaskStatus.Downloaded) &&
-          !song.uploaded
-        ) {
-          uploadSongs.push(song)
-        }
-      }
-      const barrier = 4
-      let tasks = []
       console.log('uploadSongs', uploadSongs.length)
+      tasks.length = 0
+
       for (let i = 0; i < uploadSongs.length; i++) {
         let uploadSong = uploadSongs[i]
-        if (tasks.length == barrier) {
-          await Promise.all(tasks).catch((e) => {
-            logger.error(`云盘歌曲上传错误`, {
-              e,
+        if (tasks.length >= barrier) {
+          console.log('run tasks', tasks.length)
+          await Promise.all(tasks)
+            .catch((e) => {
+              logger.error(`云盘歌曲上传错误`, {
+                e,
+              })
             })
-          })
-          tasks.length = 0
+            .finally(() => (tasks.length = 0))
         }
         tasks.push(
-          cloud(
-            {
-              songFile: {
-                name: uploadSong.songName,
-                data: fs.readFileSync(uploadSong.targetPath),
-              },
-              cookie: query.cookie,
-            },
-            request,
-          )
+          fs.promises
+            .readFile(uploadSong.targetPath)
+            .then((buffer) =>
+              cloud(
+                {
+                  songFile: {
+                    name: uploadSong.songName,
+                    data: buffer,
+                    md5: uploadSong.targetChecksum,
+                    size: uploadSong.targetFileSize,
+                  },
+                  cookie: query.cookie,
+                },
+                request,
+              ),
+            )
             .then((res) => {
               if (
                 res.status === 200 &&
@@ -96,8 +103,8 @@ module.exports = async (query, request, app) => {
                 (res && res.status === 200 && res.body.code === 200) ||
                 res.body.message == '纠错后的文件已在云盘存在'
               ) {
-                let updatedRecord = { ...uploadSong, uploaded: true }
-                await repo.upsert(updatedRecord)
+                uploadSong.uploaded = true
+                await repo.upsert(uploadSong)
                 logger.info(`云盘歌曲『${uploadSong.songName}』上传成功`)
                 return true
               } else {
@@ -116,11 +123,23 @@ module.exports = async (query, request, app) => {
               })
             }),
         )
+        console.log('push new task', tasks.length)
       }
+
+      if (tasks.length > 0) {
+        await Promise.all(tasks)
+          .catch((e) => {
+            logger.error(`云盘歌曲上传错误`, {
+              e,
+            })
+          })
+          .finally(() => (tasks.length = 0))
+      }
+
       if (runOnce) {
-        songs.length = 0
+        uploadSongs.length = 0
       }
-    } while (songs.length)
+    } while (uploadSongs.length)
   }
 
   return {

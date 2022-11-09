@@ -1,4 +1,4 @@
-const mm = require('music-metadata')
+// const mm = require('music-metadata')
 const uploadPlugin = require('../plugins/songUpload')
 const md5 = require('md5')
 module.exports = async (query, request) => {
@@ -22,6 +22,7 @@ module.exports = async (query, request) => {
       },
     })
   }
+  // FIXME: 文件 128MB 时，算这个MD5会把NODE算到OOM :)
   if (!query.songFile.md5) {
     // 命令行上传没有md5和size信息,需要填充
     query.songFile.md5 = md5(query.songFile.data)
@@ -45,52 +46,7 @@ module.exports = async (query, request) => {
       realIP: query.realIP,
     },
   )
-  let artist = ''
-  let album = ''
-  let songName = ''
-  try {
-    const metadata = await mm.parseBuffer(
-      query.songFile.data,
-      query.songFile.mimetype,
-    )
-    const info = metadata.common
 
-    if (info.title) {
-      songName = info.title
-    }
-    if (info.album) {
-      album = info.album
-    }
-    if (info.artist) {
-      artist = info.artist
-    }
-    // if (metadata.native.ID3v1) {
-    //   metadata.native.ID3v1.forEach((item) => {
-    //     // console.log(item.id, item.value)
-    //     if (item.id === 'title') {
-    //       songName = item.value
-    //     }
-    //     if (item.id === 'artist') {
-    //       artist = item.value
-    //     }
-    //     if (item.id === 'album') {
-    //       album = item.value
-    //     }
-    //   })
-    //   // console.log({
-    //   //   songName,
-    //   //   album,
-    //   //   songName,
-    //   // })
-    // }
-    // console.log({
-    //   songName,
-    //   album,
-    //   songName,
-    // })
-  } catch (error) {
-    console.log(error)
-  }
   const tokenRes = await request(
     'POST',
     `https://music.163.com/weapi/nos/token/alloc`,
@@ -118,9 +74,9 @@ module.exports = async (query, request) => {
       md5: query.songFile.md5,
       songid: res.body.songId,
       filename: query.songFile.name,
-      song: songName || filename,
-      album: album || '未知专辑',
-      artist: artist || '未知艺术家',
+      song: filename,
+      album: '未知专辑',
+      artist: '未知艺术家',
       bitrate: String(bitrate),
       resourceId: tokenRes.body.result.resourceId,
     },
