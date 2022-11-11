@@ -22,7 +22,7 @@ module.exports = async (query, request) => {
       },
     })
   }
-  // FIXME: 文件 128MB 时，算这个MD5会把NODE算到OOM :)
+  // WARN: 文件 128MB 时，算这个MD5会把NODE算到OOM :)
   if (!query.songFile.md5) {
     // 命令行上传没有md5和size信息,需要填充
     query.songFile.md5 = md5(query.songFile.data)

@@ -34,13 +34,21 @@ class Chunk {
     newQuery.offset = this.query.offset + this.query.limit;
     return new Chunk(newQuery, this.request);
   }
+  
+  offset(): number {
+    return this.query.offset;
+  }
+
+  requestWrapper() {
+    return this.request.send.bind(this.request);
+  }
 
   async resolve(): Promise<ResolvedTrack> {
     if (this.resolved) {
       return this.resolvedData;
     }
 
-    let songsResp = await songsPaginator(this.query, this.request.send.bind(this.request));
+    let songsResp = await songsPaginator(this.query, this.requestWrapper());
     let songs = songsResp.body?.songs;
     if (!songs || !songs.length) {
       this.resolved = true;
@@ -68,7 +76,7 @@ class Chunk {
       let resolvedSong = new ResolvedSong(songQuery, song);
       this.resolvedData.push(resolvedSong);
     }
-    console.log('跳过了', skip);
+    // console.log('跳过了', skip);
     this.resolved = true;
     return this.resolvedData;
   }
@@ -129,7 +137,7 @@ class TrackResolver {
     const request = new StaticIpRequest(this.context, query.ip);
     let chunkQuery = { ...query } as ChunkQuery;
     chunkQuery.offset = 0;
-    chunkQuery.limit = 100;
+    chunkQuery.limit = 500;
     return new Chunk(chunkQuery, request);
   }
 }

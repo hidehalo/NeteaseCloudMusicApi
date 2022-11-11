@@ -9,6 +9,7 @@ import {
 import { ServerContext } from '../context';
 import os from 'os';
 import process from 'process';
+import getTrackDetail from '../../module/playlist_detail';
 
 interface SongDownloadParams {
   songId: string
@@ -407,57 +408,70 @@ class Producer {
           this.addResolvedSongs(resolvedSongs);
         });
     }
-    if (filteredQuery.ids.length != query.ids.length) {
-      console.log(`跳过了${query.ids.length - filteredQuery.ids.length}`);
-    }
+    // if (filteredQuery.ids.length != query.ids.length) {
+    //   console.log(`跳过了${query.ids.length - filteredQuery.ids.length}`);
+    // }
   }
 
   async downloadTrack(query: TrackQuery): Promise<void> {
     // let resolvedSongs = await this.trackResolver.resolve(query);
     let chunk = this.trackResolver.chunk(query);
-    let runLoop = true;
     let count = 0;
     let startNanoTs = process.hrtime.bigint();
-    const concurrency = os.cpus().length;
+    // const concurrency = os.cpus().length;
+    const concurrency = 32;
+    let taskMap = new Map([]);
+    let taskId = 0;
+    let err = null;
     try {
+      let getTrackDetailQuery = { ...query };
+      let trackDetail = await getTrackDetail(getTrackDetailQuery, chunk.requestWrapper());
+      const totalCount = trackDetail.body.playlist.trackCount || 0;
+      // console.log('totalCount', totalCount);
       do {
-        let resolveSongThreads = [];
-        for (let i = 0; i < concurrency; i++) {
-          resolveSongThreads.push(chunk.resolve());
-          chunk = chunk.next();
-        }
-        let resolvedSongsArr = await Promise.all(resolveSongThreads).catch(() => []);
-        let addJobThreads = [];
-        for (let i = 0; i < resolvedSongsArr.length; i++) {
-          if (resolvedSongsArr[i].length > 0) {
-            count += resolvedSongsArr[i].length;
-            addJobThreads.push(this.addResolvedSongs(resolvedSongsArr[i]));
-          }
-        }
-        if (addJobThreads.length == 0) {
-          runLoop = false;
+        // console.log(`append task ${taskId}}`);
+        let copyTaskId = taskId;
+        taskMap.set(copyTaskId,
+          chunk.resolve()
+            .then(async (resolvedSongs) => {
+              // console.log(`task resolved ${copyTaskId}`);
+              if (resolvedSongs.length > 0) {
+                count += resolvedSongs.length;
+                await this.addResolvedSongs(resolvedSongs);
+              }
+            })
+            .catch(e => err = e)
+            .finally(() => {
+              // console.log(`delete task ${copyTaskId}`);
+              taskMap.delete(copyTaskId)
+            }))
+
+        taskId++;
+        chunk = chunk.next();
+        if (chunk.offset() > totalCount) {
+          await Promise.all(taskMap.values())
+            .catch(e => err = e)
+            .finally(() => taskMap.clear());
           break;
+        } else if (taskMap.size >= concurrency) {
+          await Promise.any(taskMap.values())
+            .catch(e => err = e);
         }
-        await Promise.all(addJobThreads)
-          .catch((reason) => {
-            this.context.logger.warn(`下载歌单『${query.id}』入队失败`, { reason, resolvedSongsArr });
-          });
       }
-      while (runLoop);
+      while (true);
     } catch (err) {
       let e = err as Error;
       this.context.logger.error(`下载歌单『${query.id}』任务添加失败，原因是：${e.message}`, { err })
     }
-    if (!runLoop) {
+    if (!err) {
       let endNanoTs = process.hrtime.bigint();
       let duration = endNanoTs - startNanoTs;
       this.context.logger.info(`下载歌单『${query.id}』任务添加成功，下载队列新增 ${count} 首歌曲，共计耗时 ${1e-9 * Number(duration.toString())} 秒`);
+    } else {
+      this.context.logger.warn(`下载歌单『${query.id}』入队失败`, { err });
     }
   }
 }
-
-// TODO: 实现上传云盘的功能
-// TODO: 实现删除本地文件的功能
 
 export {
   SongDownloadQueue,

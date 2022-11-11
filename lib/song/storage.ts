@@ -118,6 +118,8 @@ class SongRepository extends Repository<SongRecord, any> {
       SongDownloadTaskStatus.Cancel,
       SongDownloadTaskStatus.Error,
       SongDownloadTaskStatus.Timeout,
+      SongDownloadTaskStatus.Waiting,
+      SongDownloadTaskStatus.Downloading,
     ];
     let records = await this.createQueryBuilder()
       .whereIn('songId', songsId)
@@ -135,6 +137,10 @@ class SongRepository extends Repository<SongRecord, any> {
   async bulkInsert(songRecords: SongRecord[]) {
     return await this.createCommand()
       .insert(songRecords);
+  }
+
+  async batchDelete(songsId: string[]) {
+    return await this.createCommand().whereIn('songId', songsId).delete();
   }
 }
 

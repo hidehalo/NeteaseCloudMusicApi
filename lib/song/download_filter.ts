@@ -7,6 +7,7 @@ class DownloadFilter {
   private songsId: string[];
   private prepared: boolean;
   private filter: Map<string, boolean>;
+  private newSongs: SongRecord[];
 
   constructor(songsId: string[]) {
     if (!DownloadFilter.repo) {
@@ -15,6 +16,7 @@ class DownloadFilter {
     this.songsId = songsId;
     this.prepared = false;
     this.filter = new Map<string, boolean>();
+    this.newSongs = [];
   }
 
   async prepare() {
@@ -41,8 +43,10 @@ class DownloadFilter {
 
     let allDbThreads = [];
     this.prepared = true;
+    // FIXME: 新歌缺少歌曲详细信息
     if (newSongRecords.length > 0) {
       allDbThreads.push(DownloadFilter.repo.bulkInsert(newSongRecords));
+      this.newSongs = newSongRecords;
     }
     if (allowDownloadSongsId.length > 0) {
       allDbThreads.push(
@@ -63,6 +67,10 @@ class DownloadFilter {
 
   shouldSkip(songId: string): boolean {
     return !this.filter.get(songId);
+  }
+
+  getNewSongs(): SongRecord[] {
+    return this.newSongs;
   }
 }
 
