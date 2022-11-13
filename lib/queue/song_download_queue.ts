@@ -4,7 +4,8 @@ import {
   ResolvedSong, SongResolver,
   SongQuery, BatchSongQuery,
   TrackResolver, TrackQuery,
-  DownloadFilter
+  DownloadFilter, SongRecord,
+  SongRepository, getStateDescription
 } from '../song';
 import { ServerContext } from '../context';
 import os from 'os';
@@ -360,12 +361,15 @@ class Producer {
 
   trackResolver: TrackResolver;
 
+  songRepo: SongRepository;
+
   constructor(queue: SongDownloadQueue) {
     this.queue = queue;
     this.context = new ServerContext(this.queue.context.logger);
     this.queue.context.once('done', () => this.context.emit('done'));
     this.songResolver = new SongResolver(this.context);
     this.trackResolver = new TrackResolver(this.context);
+    this.songRepo = new SongRepository();
   }
 
   private async addResolvedSongs(resolvedSongs: ResolvedSong[]) {
@@ -392,6 +396,42 @@ class Producer {
     await this.downloadSongs(batchQuery);
   }
 
+  private async upsertSongRecords(resolvedSongs: ResolvedSong[], newSongsId: string[], updateSongsId: string[]) {
+    let allDbThreads = [];
+    let resolveSongsMap = new Map(resolvedSongs.map(resolvedSong => [resolvedSong.song.id.toString(), resolvedSong]));
+    if (newSongsId.length > 0) {
+      let newSongRecords = [];
+      for (let newSongId of newSongsId) {
+        let resolvedNewSong = resolveSongsMap.get(newSongId);
+        if (!resolvedNewSong) {
+          throw new Error('resolvedNewSong is not found');
+        }
+        newSongRecords.push({
+          songId: newSongId,
+          songName: resolvedNewSong.song.name,
+          coverUrl: resolvedNewSong.album.picUrl,
+          trackNumber: resolvedNewSong.song.no,
+          albumName: resolvedNewSong.album.name,
+          artistsName: resolvedNewSong.artisans.flatMap((artisan) => artisan.name).join(','),
+          state: getStateDescription(SongDownloadTaskStatus.Waiting),
+          stateDesc: getStateDescription(SongDownloadTaskStatus.Waiting),
+        } as SongRecord);
+      }
+      allDbThreads.push(this.songRepo.bulkInsert(newSongRecords));
+    }
+    if (updateSongsId.length > 0) {
+      allDbThreads.push(
+        this.songRepo.batchUpdate(updateSongsId, {
+          state: getStateDescription(SongDownloadTaskStatus.Waiting),
+          stateDesc: getStateDescription(SongDownloadTaskStatus.Waiting),
+        } as SongRecord)
+      );
+    }
+    if (allDbThreads.length > 0) {
+      await Promise.all(allDbThreads);
+    }
+  }
+
   async downloadSongs(query: BatchSongQuery): Promise<void> {
     let downloadFilter = new DownloadFilter(query.ids);
     let filteredQuery = { ...query };
@@ -404,8 +444,9 @@ class Producer {
     }
     if (filteredQuery.ids.length > 0) {
       await this.songResolver.resolveBatch(filteredQuery)
-        .then(resolvedSongs => {
-          this.addResolvedSongs(resolvedSongs);
+        .then(async resolvedSongs => {
+          await this.upsertSongRecords(resolvedSongs, downloadFilter.getNewSongsId(), downloadFilter.getUpdateSongsId());
+          await this.addResolvedSongs(resolvedSongs);
         });
     }
     // if (filteredQuery.ids.length != query.ids.length) {
@@ -431,12 +472,18 @@ class Producer {
       do {
         // console.log(`append task ${taskId}}`);
         let copyTaskId = taskId;
+        let scopeChunk = chunk;
         taskMap.set(copyTaskId,
           chunk.resolve()
             .then(async (resolvedSongs) => {
               // console.log(`task resolved ${copyTaskId}`);
               if (resolvedSongs.length > 0) {
                 count += resolvedSongs.length;
+                if (!scopeChunk.filter) {
+                  console.log('chunk offset', chunk.offset());
+                  throw new Error('Chunk download filter is not prepared');
+                }
+                await this.upsertSongRecords(resolvedSongs, scopeChunk.filter.getNewSongsId(), scopeChunk.filter.getUpdateSongsId());
                 await this.addResolvedSongs(resolvedSongs);
               }
             })

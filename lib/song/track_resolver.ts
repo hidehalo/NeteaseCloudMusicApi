@@ -21,6 +21,7 @@ class Chunk {
   request: StaticIpRequest;
   resolved: boolean;
   resolvedData: ResolvedTrack;
+  filter?: DownloadFilter;
 
   constructor(query: ChunkQuery, request: StaticIpRequest) {
     this.query = query;
@@ -57,13 +58,12 @@ class Chunk {
     let songsId = songs.flatMap((song: Song) => song.id.toString());
     let downloadFilter = new DownloadFilter(songsId);
     await downloadFilter.prepare();
+    this.filter = downloadFilter;
 
-    let skip = 0;
     for (let i = 0; i < songs.length; i++) {
       let song = songs[i] as Song;
       let songId = song.id.toString();
       if (downloadFilter.shouldSkip(songId)) {
-        skip++;
         continue;
       }
       let songQuery = {
@@ -76,7 +76,6 @@ class Chunk {
       let resolvedSong = new ResolvedSong(songQuery, song);
       this.resolvedData.push(resolvedSong);
     }
-    // console.log('跳过了', skip);
     this.resolved = true;
     return this.resolvedData;
   }
@@ -139,6 +138,10 @@ class TrackResolver {
     chunkQuery.offset = 0;
     chunkQuery.limit = 500;
     return new Chunk(chunkQuery, request);
+  }
+
+  async metadata() {
+    // TODO: 将获取元信息的方法移动到这里
   }
 }
 

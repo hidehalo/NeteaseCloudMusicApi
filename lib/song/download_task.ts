@@ -178,6 +178,7 @@ class SongDownloadTask {
   private async changeState(state: SongDownloadTaskStatus) {
     this.state = state;
     this.songRecord.state = this.getStateDescription();
+    this.songRecord.stateDesc = this.getStateDescription();
     await SongDownloadTask.repo.upsert(this.songRecord); 
   }
 

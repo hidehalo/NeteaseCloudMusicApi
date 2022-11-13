@@ -1,5 +1,4 @@
-import { SongRecord, SongRepository } from "./storage";
-import { getStateDescription, SongDownloadTaskStatus } from "./download_task";
+import { SongRepository } from "./storage";
 
 class DownloadFilter {
 
@@ -7,7 +6,8 @@ class DownloadFilter {
   private songsId: string[];
   private prepared: boolean;
   private filter: Map<string, boolean>;
-  private newSongs: SongRecord[];
+  private newSongs: string[];
+  private updateSongs: string[];
 
   constructor(songsId: string[]) {
     if (!DownloadFilter.repo) {
@@ -17,6 +17,7 @@ class DownloadFilter {
     this.prepared = false;
     this.filter = new Map<string, boolean>();
     this.newSongs = [];
+    this.updateSongs = [];
   }
 
   async prepare() {
@@ -28,37 +29,12 @@ class DownloadFilter {
       DownloadFilter.repo.allowDownload(this.songsId)
     ]);
     let needDownloadSongsId = [...notExistsSongsId, ...allowDownloadSongsId];
+    this.newSongs = notExistsSongsId;
+    this.updateSongs = allowDownloadSongsId;
     for (let i = 0; i < needDownloadSongsId.length; i++) {
       this.filter.set(needDownloadSongsId[i], true);
     }
-
-    let newSongRecords = [];
-    for (let i = 0; i < notExistsSongsId.length; i++) {
-      newSongRecords.push({
-        songId: notExistsSongsId[i],
-        state: getStateDescription(SongDownloadTaskStatus.Waiting),
-        stateDesc: getStateDescription(SongDownloadTaskStatus.Waiting),
-      } as SongRecord);
-    }
-
-    let allDbThreads = [];
     this.prepared = true;
-    // FIXME: 新歌缺少歌曲详细信息
-    if (newSongRecords.length > 0) {
-      allDbThreads.push(DownloadFilter.repo.bulkInsert(newSongRecords));
-      this.newSongs = newSongRecords;
-    }
-    if (allowDownloadSongsId.length > 0) {
-      allDbThreads.push(
-        DownloadFilter.repo.batchUpdate(allowDownloadSongsId, {
-          state: getStateDescription(SongDownloadTaskStatus.Waiting),
-          stateDesc: getStateDescription(SongDownloadTaskStatus.Waiting),
-        } as SongRecord)
-      );
-    }
-    if (allDbThreads.length > 0) {
-      await Promise.all(allDbThreads);
-    }
   }
 
   hasPrepared(): boolean {
@@ -69,8 +45,12 @@ class DownloadFilter {
     return !this.filter.get(songId);
   }
 
-  getNewSongs(): SongRecord[] {
+  getNewSongsId(): string[] {
     return this.newSongs;
+  }
+
+  getUpdateSongsId(): string[] {
+    return this.updateSongs;
   }
 }
 
