@@ -9,7 +9,7 @@ import {
 const cloudMatch = require('./cloud_match')
 const fs = require('fs')
 const uploadPlugin = require('../plugins/songUpload')
-const cloud = async (query, request) => {
+const cloud = async (query, request, logger) => {
   if (!query.songFile) {
     return Promise.reject({
       status: 500,
@@ -45,71 +45,53 @@ const cloud = async (query, request) => {
       proxy: query.proxy,
       realIP: query.realIP,
     },
-  ).then((res) => {
-    if (res.status != 200 || res.body.code != 200) {
-      console.log('res', res)
-    }
-    return request(
-      'POST',
-      `https://music.163.com/weapi/nos/token/alloc`,
-      {
-        bucket: '',
-        ext: ext,
-        filename: filename,
-        local: false,
-        nos_product: 3,
-        type: 'audio',
-        md5: query.songFile.md5,
-      },
-      { crypto: 'weapi', cookie: query.cookie, proxy: query.proxy },
-    ).then(async (tokenRes) => {
-      if (tokenRes.status != 200 || tokenRes.body.code != 200) {
-        console.log('tokenRes', tokenRes)
-      }
-      let tasks = []
-      if (res.body.needUpload) {
-        tasks.push(
-          query.songFile.promise().then((data) => {
-            query.songFile.data = data
-            query.songFile.name = `query.songName.${ext}`
-            uploadPlugin(query, request).then((uploadRes) => {
-              if (uploadRes.status != 200 || uploadRes.body.code != 200) {
-                console.log('uploadRes', uploadRes)
-              }
-            })
-          }),
-        )
-      }
+  )
+    .then((res) => {
+      logger.debug(`歌曲『${query.songFile.songName}』上传预检测通过`)
+      return request(
+        'POST',
+        `https://music.163.com/weapi/nos/token/alloc`,
+        {
+          bucket: '',
+          ext: ext,
+          filename: filename,
+          local: false,
+          nos_product: 3,
+          type: 'audio',
+          md5: query.songFile.md5,
+        },
+        { crypto: 'weapi', cookie: query.cookie, proxy: query.proxy },
+      ).then(async (tokenRes) => {
+        logger.debug(`歌曲『${query.songFile.songName}』文件对象令牌申请通过`)
+        let tasks = []
+        if (res.body.needUpload) {
+          tasks.push(
+            query.songFile.promise().then(async (data) => {
+              query.songFile.data = data
+              query.songFile.name = `query.songName.${ext}`
+              await uploadPlugin(query, request).then((uploadRes) => {
+                logger.debug(
+                  `歌曲『${query.songFile.songName}』本地文件上传通过`,
+                )
+                return uploadRes
+              })
+            }),
+          )
+        }
 
-      tasks.push(
-        request(
-          'POST',
-          `https://music.163.com/api/upload/cloud/info/v2`,
-          {
-            md5: query.songFile.md5,
-            songid: res.body.songId,
-            filename: filename,
-            song: filename,
-            album: query.songFile.album || '未知专辑',
-            artist: query.songFile.artist || '未知艺术家',
-            bitrate: String(bitrate),
-            resourceId: tokenRes.body.result.resourceId,
-          },
-          {
-            crypto: 'weapi',
-            cookie: query.cookie,
-            proxy: query.proxy,
-            realIP: query.realIP,
-          },
-        ).then((infoRes) => {
-          if (infoRes.status != 200 || infoRes.body.code != 200) {
-            console.log('infoRes', infoRes)
-          }
-          return request(
+        tasks.push(
+          request(
             'POST',
-            `https://interface.music.163.com/api/cloud/pub/v2`,
+            `https://music.163.com/api/upload/cloud/info/v2`,
             {
-              songid: infoRes.body.songId,
+              md5: query.songFile.md5,
+              songid: res.body.songId,
+              filename: filename,
+              song: filename,
+              album: query.songFile.album || '未知专辑',
+              artist: query.songFile.artist || '未知艺术家',
+              bitrate: String(bitrate),
+              resourceId: tokenRes.body.result.resourceId,
             },
             {
               crypto: 'weapi',
@@ -117,25 +99,55 @@ const cloud = async (query, request) => {
               proxy: query.proxy,
               realIP: query.realIP,
             },
-          )
-        }),
-      )
+          ).then((infoRes) => {
+            logger.debug(`歌曲『${query.songFile.songName}』基础信息更新通过`)
+            return request(
+              'POST',
+              `https://interface.music.163.com/api/cloud/pub/v2`,
+              {
+                songid: infoRes.body.songId,
+              },
+              {
+                crypto: 'weapi',
+                cookie: query.cookie,
+                proxy: query.proxy,
+                realIP: query.realIP,
+              },
+            ).then((pubRes) => {
+              logger.debug(`歌曲『${query.songFile.songName}』公开信息读取通过`)
+              return pubRes
+            })
+          }),
+        )
 
-      const taskResponses = await Promise.all(tasks)
-      let body = { ...res.body }
-      for (const taskResponse of taskResponses) {
-        if (taskResponse) {
-          body = { ...body, ...taskResponse.body }
+        const taskResponses = await Promise.all(tasks).catch((e) => {
+          logger.error(`云盘歌曲『${query.songFile.songName}』上传错误`, {
+            e,
+            action: 'cloud',
+          })
+          return [e]
+        })
+        let body = { ...res.body }
+        for (const taskResponse of taskResponses) {
+          if (taskResponse) {
+            body = { ...body, ...taskResponse.body }
+          }
         }
-      }
 
-      return {
-        status: 200,
-        body,
-        cookie: res.cookie,
-      }
+        return {
+          status: 200,
+          body,
+          cookie: res.cookie,
+        }
+      })
     })
-  })
+    .catch((e) => {
+      logger.error(`云盘歌曲『${query.songFile.songName}』上传错误`, {
+        e,
+        action: 'cloud',
+      })
+      return e
+    })
 }
 
 module.exports = async (query, request, app) => {
@@ -157,7 +169,7 @@ module.exports = async (query, request, app) => {
     let offset = 0
     const limit = 1000
     let runOnce = true
-    const barrier = 2
+    const barrier = 4
     let taskMap = new Map([])
     repo.addConstraints(
       new StateIn([
@@ -179,7 +191,6 @@ module.exports = async (query, request, app) => {
       } else {
         uploadSongs = await repo.findMany(ids, selectFields)
       }
-      // console.log('uploadSongs', uploadSongs.length)
       for (let i = 0; i < uploadSongs.length; i++) {
         let uploadSong = uploadSongs[i]
         if (taskMap.size >= barrier) {
@@ -187,9 +198,14 @@ module.exports = async (query, request, app) => {
           await Promise.any(taskMap.values()).catch((e) => {
             logger.error(`云盘歌曲上传错误`, {
               e,
+              action: 'main',
             })
           })
-          console.log('Run task duration:', Date.now() - tsStart, 'ms')
+          logger.debug(
+            `歌曲『${uploadSong.songName}』上传耗时：${
+              Date.now() - tsStart
+            } ms`,
+          )
         }
         if (!taskMap.has(uploadSong.songId)) {
           const uploadTask = cloud(
@@ -206,6 +222,7 @@ module.exports = async (query, request, app) => {
               cookie: query.cookie,
             },
             request,
+            logger,
           )
             .then((res) => {
               if (
@@ -260,6 +277,7 @@ module.exports = async (query, request, app) => {
           .catch((e) => {
             logger.error(`云盘歌曲上传错误`, {
               e,
+              action: 'cloud',
             })
           })
           .finally(() => taskMap.clear())

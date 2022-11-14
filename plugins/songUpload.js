@@ -23,7 +23,7 @@ module.exports = async (query, request) => {
     },
     { crypto: 'weapi', cookie: query.cookie, proxy: query.proxy },
   )
-
+  // TODO: 修复 {"code":404|500|400,"msg":"rep create failed","needUpload":true}
   // 上传
   const objectKey = tokenRes.body.result.objectKey.replace('/', '%2F')
   try {
