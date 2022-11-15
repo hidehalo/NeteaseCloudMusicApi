@@ -9,6 +9,7 @@ import {
 const cloudMatch = require('./cloud_match')
 const fs = require('fs')
 const uploadPlugin = require('../plugins/songUpload')
+const hasUpload = require('../module/user_cloud_detail')
 const cloud = async (query, request, logger) => {
   if (!query.songFile) {
     return Promise.reject({
@@ -194,80 +195,116 @@ module.exports = async (query, request, app) => {
       for (let i = 0; i < uploadSongs.length; i++) {
         let uploadSong = uploadSongs[i]
         if (taskMap.size >= barrier) {
-          let tsStart = Date.now()
+          // let tsStart = Date.now()
           await Promise.any(taskMap.values()).catch((e) => {
             logger.error(`云盘歌曲上传错误`, {
               e,
               action: 'main',
             })
           })
-          logger.debug(
-            `歌曲『${uploadSong.songName}』上传耗时：${
-              Date.now() - tsStart
-            } ms`,
-          )
         }
         if (!taskMap.has(uploadSong.songId)) {
-          const uploadTask = cloud(
-            {
-              songFile: {
-                promise: () => fs.promises.readFile(uploadSong.targetPath),
-                fileName: uploadSong.targetPath,
-                songName: uploadSong.songName,
-                md5: uploadSong.targetChecksum,
-                size: uploadSong.targetFileSize,
-                album: uploadSong.albumName,
-                artist: uploadSong.artistsName,
+          let tsStart = null
+          let uploadSongCopy = { ...uploadSong }
+          const uploadTask = new Promise((resolve) => {
+            tsStart = Date.now()
+            resolve(true)
+          }).then(() =>
+            hasUpload(
+              {
+                id: uploadSongCopy.songId,
+                cookie: query.cookie,
               },
-              cookie: query.cookie,
-            },
-            request,
-            logger,
-          )
-            .then((res) => {
-              if (
-                res.status === 200 &&
-                (res.body.code === 200 || res.body.code === 201)
-              ) {
-                return cloudMatch(
+              request,
+            )
+              .then(async (hasUploadRes) => {
+                if (
+                  hasUploadRes.body.data &&
+                  hasUploadRes.body.data.length > 0
+                ) {
+                  uploadSongCopy.uploaded = true
+                  await repo.upsert(uploadSongCopy)
+                  logger.info(
+                    `云盘歌曲『${uploadSongCopy.songName}』已存在，上传成功`,
+                  )
+                  return true
+                }
+
+                return cloud(
                   {
-                    uid: query.uid,
-                    sid: res.body.privateCloud.simpleSong.id,
-                    asid: uploadSong.songId,
-                    realIp: query.realIp,
+                    songFile: {
+                      promise: () =>
+                        fs.promises.readFile(uploadSongCopy.targetPath),
+                      fileName: uploadSongCopy.targetPath,
+                      songName: uploadSongCopy.songName,
+                      md5: uploadSongCopy.targetChecksum,
+                      size: uploadSongCopy.targetFileSize,
+                      album: uploadSongCopy.albumName,
+                      artist: uploadSongCopy.artistsName,
+                    },
                     cookie: query.cookie,
                   },
                   request,
+                  logger,
                 )
-              } else {
-                return res
-              }
-            })
-            .then(async (res) => {
-              if (
-                (res && res.status === 200 && res.body.code === 200) ||
-                res.body.message == '纠错后的文件已在云盘存在'
-              ) {
-                uploadSong.uploaded = true
-                await repo.upsert(uploadSong)
-                logger.info(`云盘歌曲『${uploadSong.songName}』上传成功`)
-                return true
-              } else {
-                logger.error(
-                  `云盘歌曲『${uploadSong.songName}』上传失败：${
-                    res.body.message || res.body.msg
-                  }`,
-                  { res },
-                )
-                return false
-              }
-            })
-            .catch((e) => {
-              logger.error(`云盘歌曲『${uploadSong.songName}』上传错误`, {
-                e,
+                  .then((res) => {
+                    if (
+                      res.status === 200 &&
+                      (res.body.code === 200 || res.body.code === 201)
+                    ) {
+                      return cloudMatch(
+                        {
+                          uid: query.uid,
+                          sid: res.body.privateCloud.simpleSong.id,
+                          asid: uploadSongCopy.songId,
+                          realIp: query.realIp,
+                          cookie: query.cookie,
+                        },
+                        request,
+                      )
+                    } else {
+                      return res
+                    }
+                  })
+                  .then(async (res) => {
+                    if (
+                      (res && res.status === 200 && res.body.code === 200) ||
+                      res.body.message == '纠错后的文件已在云盘存在'
+                    ) {
+                      uploadSongCopy.uploaded = true
+                      await repo.upsert(uploadSongCopy)
+                      logger.info(
+                        `云盘歌曲『${uploadSongCopy.songName}』上传成功`,
+                      )
+                      return true
+                    } else {
+                      logger.error(
+                        `云盘歌曲『${uploadSongCopy.songName}』上传失败：${
+                          res.body.message || res.body.msg
+                        }`,
+                        { res },
+                      )
+                      return false
+                    }
+                  })
+                  .catch((e) => {
+                    logger.error(
+                      `云盘歌曲『${uploadSongCopy.songName}』上传错误`,
+                      {
+                        e,
+                      },
+                    )
+                  })
               })
-            })
-            .finally(() => taskMap.delete(uploadSong.songId))
+              .finally(() => {
+                taskMap.delete(uploadSongCopy.songId)
+                logger.debug(
+                  `歌曲『${uploadSongCopy.songName}』上传耗时：${
+                    Date.now() - tsStart
+                  } ms`,
+                )
+              }),
+          )
           taskMap.set(uploadSong.songId, uploadTask)
         }
       }
