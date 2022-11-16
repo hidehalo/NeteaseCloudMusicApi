@@ -53,6 +53,10 @@ abstract class Repository<RecordMapping extends {}, Result> {
       this.constraints.push(constraints[i]);
     }
   }
+
+  first(fields: string[] = ['*']) {
+    return this.createQueryBuilder().column(fields).first();
+  }
 }
 
 class SongRepository extends Repository<SongRecord, any> {
@@ -166,8 +170,8 @@ class StateIn implements Constraint {
   }
 }
 
-class UploadedEqual {
-  
+class UploadedEqual implements Constraint {
+
   private uploaded;
 
   constructor(flag: boolean) {
@@ -179,9 +183,25 @@ class UploadedEqual {
   }
 }
 
+class SearchPattern implements Constraint {
+
+  private key;
+  private pattern;
+
+  constructor(key: string, pattern: string) {
+    this.key = key;
+    this.pattern = pattern;
+  }
+
+  apply(query: Knex.QueryBuilder): void {
+    query.orWhere(this.key, 'like', `%${this.pattern}%`);
+  }
+}
+
 export {
   SongRecord,
   SongRepository,
   StateIn,
-  UploadedEqual
+  UploadedEqual,
+  SearchPattern
 }

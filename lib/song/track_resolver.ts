@@ -3,6 +3,8 @@ import songsPaginator from '../../module/playlist_track_all';
 import { StaticIpRequest, BasicQuery } from '../http';
 import { ServerContext } from "../context";
 import { DownloadFilter } from "./download_filter";
+import getTrackDetail from '../../module/playlist_detail';
+
 
 type ResolvedTrack = ResolvedSong[];
 
@@ -13,6 +15,10 @@ interface TrackQuery extends BasicQuery {
 interface ChunkQuery extends TrackQuery {
   offset: number
   limit: number
+}
+
+function requestWrapper(request: StaticIpRequest) {
+  return request.send.bind(request);
 }
 
 class Chunk {
@@ -41,7 +47,7 @@ class Chunk {
   }
 
   requestWrapper() {
-    return this.request.send.bind(this.request);
+    return requestWrapper(this.request);
   }
 
   async resolve(): Promise<ResolvedTrack> {
@@ -101,7 +107,7 @@ class TrackResolver {
       let newQuery = { ...query } as any;
       newQuery.offset = offset;
       newQuery.limit = length;
-      let songsResp = await songsPaginator(newQuery, request.send.bind(request));
+      let songsResp = await songsPaginator(newQuery, requestWrapper(request));
       songs = songsResp.body?.songs;
 
       if (!songs || !songs.length) {
@@ -140,8 +146,12 @@ class TrackResolver {
     return new Chunk(chunkQuery, request);
   }
 
-  async metadata() {
-    // TODO: 将获取元信息的方法移动到这里
+  async metadata(query: TrackQuery) {
+    const request = new StaticIpRequest(this.context, query.ip);
+    let trackDetail = await getTrackDetail(query, requestWrapper(request));
+    return {
+      totalCount: trackDetail.body.playlist.trackCount || 0
+    };
   }
 }
 

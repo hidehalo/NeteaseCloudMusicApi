@@ -10,7 +10,7 @@ import {
 import { ServerContext } from '../context';
 import os from 'os';
 import process from 'process';
-import getTrackDetail from '../../module/playlist_detail';
+// import getTrackDetail from '../../module/playlist_detail';
 
 interface SongDownloadParams {
   songId: string
@@ -465,9 +465,13 @@ class Producer {
     let taskId = 0;
     let err = null;
     try {
-      let getTrackDetailQuery = { ...query };
-      let trackDetail = await getTrackDetail(getTrackDetailQuery, chunk.requestWrapper());
-      const totalCount = trackDetail.body.playlist.trackCount || 0;
+      const trackMeta = await this.trackResolver.metadata(query);
+      const totalCount = trackMeta.totalCount;
+
+      // let getTrackDetailQuery = { ...query };
+      // let trackDetail = await getTrackDetail(getTrackDetailQuery, chunk.requestWrapper());
+      // const totalCount = trackDetail.body.playlist.trackCount || 0;
+
       // console.log('totalCount', totalCount);
       do {
         // console.log(`append task ${taskId}}`);
