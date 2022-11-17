@@ -57,6 +57,10 @@ abstract class Repository<RecordMapping extends {}, Result> {
   first(fields: string[] = ['*']) {
     return this.createQueryBuilder().column(fields).first();
   }
+
+  take(count: number, fields: string[] = ['*']) {
+    return this.createQueryBuilder().column(fields).limit(count).select();
+  }
 }
 
 class SongRepository extends Repository<SongRecord, any> {

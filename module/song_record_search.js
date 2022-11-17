@@ -9,7 +9,7 @@ module.exports = async (query, request, app) => {
     new SearchPattern('albumName', searchPattern),
     new SearchPattern('artistsName', searchPattern),
   )
-  let result = await repo.first()
+  let result = await repo.take(10)
   // TODO: 还需要寻找云盘中的音乐
   return {
     status: 200,
