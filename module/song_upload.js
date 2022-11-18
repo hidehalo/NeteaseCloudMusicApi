@@ -179,6 +179,7 @@ module.exports = async (query, request, app) => {
       ]),
       new UploadedEqual(false),
     )
+
     do {
       if (ids[0] === 'all') {
         runOnce = false
@@ -192,10 +193,9 @@ module.exports = async (query, request, app) => {
       } else {
         uploadSongs = await repo.findMany(ids, selectFields)
       }
+
       for (let i = 0; i < uploadSongs.length; i++) {
-        let uploadSong = uploadSongs[i]
         if (taskMap.size >= barrier) {
-          // let tsStart = Date.now()
           await Promise.any(taskMap.values()).catch((e) => {
             logger.error(`云盘歌曲上传错误`, {
               e,
@@ -203,109 +203,117 @@ module.exports = async (query, request, app) => {
             })
           })
         }
-        if (!taskMap.has(uploadSong.songId)) {
+
+        if (!taskMap.has(uploadSongs[i].songId)) {
           let tsStart = null
-          let uploadSongCopy = { ...uploadSong }
+          let uploadSongCopy = { ...uploadSongs[i] }
           const uploadTask = new Promise((resolve) => {
             tsStart = Date.now()
             resolve(true)
-          }).then(() =>
-            hasUpload(
-              {
-                id: uploadSongCopy.songId,
-                cookie: query.cookie,
-              },
-              request,
-            )
-              .then(async (hasUploadRes) => {
-                if (
-                  hasUploadRes.body.data &&
-                  hasUploadRes.body.data.length > 0
-                ) {
-                  uploadSongCopy.uploaded = true
-                  await repo.upsert(uploadSongCopy)
+          })
+            .then(async () => {
+              let hasUploadRes = await hasUpload(
+                {
+                  id: uploadSongCopy.songId,
+                  cookie: query.cookie,
+                },
+                request,
+              )
+              if (hasUploadRes.body.data && hasUploadRes.body.data.length > 0) {
+                // 已存在于云盘
+                return {
+                  resultCode: 1,
+                  simpleSong: hasUploadRes.body.data[0].simpleSong,
+                  error: null,
+                }
+              }
+              let cloudUploadRes = await cloud(
+                {
+                  songFile: {
+                    promise: () =>
+                      fs.promises.readFile(uploadSongCopy.targetPath),
+                    fileName: uploadSongCopy.targetPath,
+                    songName: uploadSongCopy.songName,
+                    md5: uploadSongCopy.targetChecksum,
+                    size: uploadSongCopy.targetFileSize,
+                    album: uploadSongCopy.albumName,
+                    artist: uploadSongCopy.artistsName,
+                  },
+                  cookie: query.cookie,
+                },
+                request,
+                logger,
+              )
+              if (
+                cloudUploadRes.body.code === 200 ||
+                cloudUploadRes.body.code === 201
+              ) {
+                // 需要上传
+                return {
+                  resultCode: 2,
+                  simpleSong: cloudUploadRes.body.privateCloud.simpleSong,
+                  error: null,
+                }
+              } else {
+                // 出错了
+                let err = new Error()
+                err.context = cloudUploadRes
+                return {
+                  error: err,
+                }
+              }
+            })
+            .then(async (result) => {
+              if (result.error) {
+                logger.error(`云盘歌曲『${uploadSongCopy.songName}』上传错误`, {
+                  e: result.error,
+                })
+                return
+              }
+              let cloudMatchRes = await cloudMatch(
+                {
+                  uid: query.uid,
+                  sid: result.simpleSong.id,
+                  asid: uploadSongCopy.songId,
+                  realIp: query.realIp,
+                  cookie: query.cookie,
+                },
+                request,
+              )
+              if (
+                cloudMatchRes.body.code === 200 ||
+                cloudMatchRes.body.message == '纠错后的文件已在云盘存在'
+              ) {
+                uploadSongCopy.uploaded = true
+                await repo.upsert(uploadSongCopy)
+                if (result.resultCode == 1) {
                   logger.info(
                     `云盘歌曲『${uploadSongCopy.songName}』已存在，上传成功`,
                   )
-                  return true
+                } else {
+                  logger.info(`云盘歌曲『${uploadSongCopy.songName}』上传成功`)
                 }
-
-                return cloud(
-                  {
-                    songFile: {
-                      promise: () =>
-                        fs.promises.readFile(uploadSongCopy.targetPath),
-                      fileName: uploadSongCopy.targetPath,
-                      songName: uploadSongCopy.songName,
-                      md5: uploadSongCopy.targetChecksum,
-                      size: uploadSongCopy.targetFileSize,
-                      album: uploadSongCopy.albumName,
-                      artist: uploadSongCopy.artistsName,
-                    },
-                    cookie: query.cookie,
-                  },
-                  request,
-                  logger,
-                )
-                  .then((res) => {
-                    if (
-                      res.status === 200 &&
-                      (res.body.code === 200 || res.body.code === 201)
-                    ) {
-                      return cloudMatch(
-                        {
-                          uid: query.uid,
-                          sid: res.body.privateCloud.simpleSong.id,
-                          asid: uploadSongCopy.songId,
-                          realIp: query.realIp,
-                          cookie: query.cookie,
-                        },
-                        request,
-                      )
-                    } else {
-                      return res
-                    }
-                  })
-                  .then(async (res) => {
-                    if (
-                      (res && res.status === 200 && res.body.code === 200) ||
-                      res.body.message == '纠错后的文件已在云盘存在'
-                    ) {
-                      uploadSongCopy.uploaded = true
-                      await repo.upsert(uploadSongCopy)
-                      logger.info(
-                        `云盘歌曲『${uploadSongCopy.songName}』上传成功`,
-                      )
-                      return true
-                    } else {
-                      logger.error(
-                        `云盘歌曲『${uploadSongCopy.songName}』上传失败：${
-                          res.body.message || res.body.msg
-                        }`,
-                        { res },
-                      )
-                      return false
-                    }
-                  })
-                  .catch((e) => {
-                    logger.error(
-                      `云盘歌曲『${uploadSongCopy.songName}』上传错误`,
-                      {
-                        e,
-                      },
-                    )
-                  })
+              } else {
+                logger.error(`云盘歌曲『${uploadSongCopy.songName}』上传失败`, {
+                  cloudMatchRes,
+                })
+              }
+            })
+            .catch((e) => {
+              logger.error(`云盘歌曲『${uploadSongCopy.songName}』上传错误`, {
+                e,
               })
-              .finally(() => {
-                taskMap.delete(uploadSongCopy.songId)
-                logger.debug(
-                  `歌曲『${uploadSongCopy.songName}』上传耗时：${
-                    Date.now() - tsStart
-                  } ms`,
-                )
-              }),
-          )
-          taskMap.set(uploadSong.songId, uploadTask)
+            })
+            .finally(() => {
+              taskMap.delete(uploadSongCopy.songId)
+              logger.debug(
+                `歌曲『${uploadSongCopy.songName}』上传耗时：${
+                  Date.now() - tsStart
+                } ms`,
+              )
+            })
+
+          taskMap.set(uploadSongCopy.songId, uploadTask)
         }
       }
 
