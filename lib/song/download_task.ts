@@ -227,6 +227,9 @@ class SongDownloadTask {
         speedMax = stats.speed;
       }
       this.songRecord.downloadProgress = stats.progress;
+      // FIXME: 在并发状态下，重试下载貌似会出现bug
+      // 表现为 `targetFileSize` 成倍增加，文件数量大于一，自动发生重命名
+      // 还有一种不太成熟但有效的做法是直接调用 `this.getTargetFileSize()`
       this.songRecord.targetFileSize = stats.downloaded;
       await SongDownloadTask.repo.upsert(this.songRecord);
     });

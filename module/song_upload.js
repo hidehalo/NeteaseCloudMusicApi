@@ -121,13 +121,26 @@ const cloud = async (query, request, logger) => {
           }),
         )
 
-        const taskResponses = await Promise.all(tasks).catch((e) => {
-          logger.error(`云盘歌曲『${query.songFile.songName}』上传错误`, {
-            e,
-            action: 'cloud',
-          })
-          return [e]
-        })
+        let taskResponses = []
+        for (const task of tasks) {
+          taskResponses.push(
+            await task.catch((e) => {
+              logger.error(`云盘歌曲『${query.songFile.songName}』上传错误`, {
+                e,
+                action: 'cloud',
+              })
+              return [e]
+            }),
+          )
+        }
+        // WARN: 不要并发，并发带来的乱序可能导致查询的失败进而增加服务的失败概率
+        // await Promise.all(tasks).catch((e) => {
+        //   logger.error(`云盘歌曲『${query.songFile.songName}』上传错误`, {
+        //     e,
+        //     action: 'cloud',
+        //   })
+        //   return [e]
+        // })
         let body = { ...res.body }
         for (const taskResponse of taskResponses) {
           if (taskResponse) {
