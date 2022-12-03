@@ -119,6 +119,7 @@ class SongDownloadTask {
     return `${this.rootDir}/${dirBaseArtisan}/${dirBaseAlbum}`;
   }
 
+  // FIXME: buggy "月食(The Weeping Woman)"
   private parseExtension(url: string): string {
     const basename = path.basename(url);
     const firstDot = basename.indexOf('.');
@@ -316,6 +317,7 @@ class SongDownloadTask {
           targetPath: this.getTargetPath(),
           targetChecksum: this.getTargetFileChecksum(true),
         });
+        fs.rmSync(this.getTargetPath());
       } else {
         let endNanoTs = process.hrtime.bigint();
         let duration = endNanoTs - startNanoTs;

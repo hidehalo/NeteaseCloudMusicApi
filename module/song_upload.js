@@ -62,51 +62,51 @@ const cloud = async (query, request, logger) => {
           md5: query.songFile.md5,
         },
         { crypto: 'weapi', cookie: query.cookie, proxy: query.proxy },
-      ).then(async (tokenRes) => {
-        logger.debug(`歌曲『${query.songFile.songName}』文件对象令牌申请通过`)
-        let tasks = []
-        if (res.body.needUpload) {
-          tasks.push(
-            query.songFile.promise().then(async (data) => {
-              query.songFile.data = data
-              query.songFile.name = `query.songName.${ext}`
-              await uploadPlugin(query, request).then((uploadRes) => {
-                logger.debug(
-                  `歌曲『${query.songFile.songName}』本地文件上传通过`,
-                )
-                return uploadRes
-              })
-            }),
-          )
-        }
+      )
+        .then(async (tokenRes) => {
+          logger.debug(`歌曲『${query.songFile.songName}』文件对象令牌申请通过`)
+          let tasks = []
+          if (res.body.needUpload) {
+            tasks.push(
+              query.songFile
+                .promise()
+                .then(async (data) => {
+                  query.songFile.data = data
+                  query.songFile.name = `query.songName.${ext}`
+                  // FIXME: 不知道为什么 `uploadPlugin` 似乎不太稳定，经常 404
+                  await uploadPlugin(query, request).then((uploadRes) => {
+                    logger.debug(
+                      `歌曲『${query.songFile.songName}』本地文件上传通过`,
+                    )
+                    return uploadRes
+                  })
+                })
+                .catch((e) => {
+                  logger.error(
+                    `云盘歌曲『${query.songFile.songName}』上传错误`,
+                    {
+                      e,
+                      action: 'cloud.uploadPlugin',
+                    },
+                  )
+                  return [e]
+                }),
+            )
+          }
 
-        tasks.push(
-          request(
-            'POST',
-            `https://music.163.com/api/upload/cloud/info/v2`,
-            {
-              md5: query.songFile.md5,
-              songid: res.body.songId,
-              filename: filename,
-              song: filename,
-              album: query.songFile.album || '未知专辑',
-              artist: query.songFile.artist || '未知艺术家',
-              bitrate: String(bitrate),
-              resourceId: tokenRes.body.result.resourceId,
-            },
-            {
-              crypto: 'weapi',
-              cookie: query.cookie,
-              proxy: query.proxy,
-              realIP: query.realIP,
-            },
-          ).then((infoRes) => {
-            logger.debug(`歌曲『${query.songFile.songName}』基础信息更新通过`)
-            return request(
+          tasks.push(
+            request(
               'POST',
-              `https://interface.music.163.com/api/cloud/pub/v2`,
+              `https://music.163.com/api/upload/cloud/info/v2`,
               {
-                songid: infoRes.body.songId,
+                md5: query.songFile.md5,
+                songid: res.body.songId,
+                filename: filename,
+                song: filename,
+                album: query.songFile.album || '未知专辑',
+                artist: query.songFile.artist || '未知艺术家',
+                bitrate: String(bitrate),
+                resourceId: tokenRes.body.result.resourceId,
               },
               {
                 crypto: 'weapi',
@@ -114,46 +114,79 @@ const cloud = async (query, request, logger) => {
                 proxy: query.proxy,
                 realIP: query.realIP,
               },
-            ).then((pubRes) => {
-              logger.debug(`歌曲『${query.songFile.songName}』公开信息读取通过`)
-              return pubRes
-            })
-          }),
-        )
-
-        let taskResponses = []
-        for (const task of tasks) {
-          taskResponses.push(
-            await task.catch((e) => {
-              logger.error(`云盘歌曲『${query.songFile.songName}』上传错误`, {
-                e,
-                action: 'cloud',
+            )
+              .then((infoRes) => {
+                logger.debug(
+                  `歌曲『${query.songFile.songName}』基础信息更新通过`,
+                )
+                return request(
+                  'POST',
+                  `https://interface.music.163.com/api/cloud/pub/v2`,
+                  {
+                    songid: infoRes.body.songId,
+                  },
+                  {
+                    crypto: 'weapi',
+                    cookie: query.cookie,
+                    proxy: query.proxy,
+                    realIP: query.realIP,
+                  },
+                ).then((pubRes) => {
+                  logger.debug(
+                    `歌曲『${query.songFile.songName}』公开信息读取通过`,
+                  )
+                  return pubRes
+                })
               })
-              return [e]
-            }),
+              .catch((e) => {
+                logger.error(`云盘歌曲『${query.songFile.songName}』上传错误`, {
+                  e,
+                  action: 'cloud.pubInfo',
+                })
+                return [e]
+              }),
           )
-        }
-        // WARN: 不要并发，并发带来的乱序可能导致查询的失败进而增加服务的失败概率
-        // await Promise.all(tasks).catch((e) => {
-        //   logger.error(`云盘歌曲『${query.songFile.songName}』上传错误`, {
-        //     e,
-        //     action: 'cloud',
-        //   })
-        //   return [e]
-        // })
-        let body = { ...res.body }
-        for (const taskResponse of taskResponses) {
-          if (taskResponse) {
-            body = { ...body, ...taskResponse.body }
-          }
-        }
 
-        return {
-          status: 200,
-          body,
-          cookie: res.cookie,
-        }
-      })
+          let taskResponses = []
+          for (const task of tasks) {
+            taskResponses.push(
+              await task.catch((e) => {
+                logger.error(`云盘歌曲『${query.songFile.songName}』上传错误`, {
+                  e,
+                  action: 'cloud',
+                })
+                return [e]
+              }),
+            )
+          }
+          // WARN: 不要并发，并发带来的乱序可能导致查询的失败进而增加服务的失败概率
+          // await Promise.all(tasks).catch((e) => {
+          //   logger.error(`云盘歌曲『${query.songFile.songName}』上传错误`, {
+          //     e,
+          //     action: 'cloud',
+          //   })
+          //   return [e]
+          // })
+          let body = { ...res.body }
+          for (const taskResponse of taskResponses) {
+            if (taskResponse) {
+              body = { ...body, ...taskResponse.body }
+            }
+          }
+
+          return {
+            status: 200,
+            body,
+            cookie: res.cookie,
+          }
+        })
+        .catch((e) => {
+          logger.error(`云盘歌曲『${query.songFile.songName}』上传错误`, {
+            e,
+            action: 'cloud',
+          })
+          return [e]
+        })
     })
     .catch((e) => {
       logger.error(`云盘歌曲『${query.songFile.songName}』上传错误`, {
@@ -258,10 +291,10 @@ module.exports = async (query, request, app) => {
                 logger,
               )
               if (
-                cloudUploadRes.body.code === 200 ||
-                cloudUploadRes.body.code === 201
+                (cloudUploadRes.body.code === 200 ||
+                  cloudUploadRes.body.code === 201) &&
+                cloudUploadRes.body.privateCloud
               ) {
-                // 需要上传
                 return {
                   resultCode: 2,
                   simpleSong: cloudUploadRes.body.privateCloud.simpleSong,

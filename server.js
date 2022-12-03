@@ -372,7 +372,10 @@ async function serveNcmApi(options) {
   }
   process.on('SIGINT', gracefulShutdown)
   process.on('SIGTERM', gracefulShutdown)
-
+  process.on('unhandledRejection', async (e) => {
+    logger.error('未处理捕获的异常', { e })
+    await gracefulShutdown()
+  })
   // if (process.env.ANONYMOUS) {
   //   await generateConfig()
   // }
