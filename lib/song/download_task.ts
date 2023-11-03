@@ -330,6 +330,7 @@ class SongDownloadTask {
             }
             fs.renameSync(oldPath, newPath);
             this.songRecord.targetPath = newPath;
+            this.targetFileExtension = newExt;
             this.context.logger.debug(`下载歌曲『${this.getFileName()}』文件扩展名校正成功`, {
               oldPath,
               newPath
